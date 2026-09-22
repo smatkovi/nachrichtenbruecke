@@ -1,0 +1,19 @@
+[ConnectionManager]
+BusName=org.freedesktop.Telepathy.ConnectionManager.bruecke
+ObjectPath=/org/freedesktop/Telepathy/ConnectionManager/bruecke
+
+[Protocol whatsapp]
+param-account=s required
+ConnectionInterfaces=org.freedesktop.Telepathy.Connection.Interface.Requests;org.freedesktop.Telepathy.Connection.Interface.SimplePresence;org.freedesktop.Telepathy.Connection.Interface.Contacts;
+RequestableChannelClasses=org.freedesktop.Telepathy.Channel.Type.Text
+VCardField=x-whatsapp
+EnglishName=WhatsApp
+Icon=icon-m-service-whatsapp
+
+[Protocol signal]
+param-account=s required
+ConnectionInterfaces=org.freedesktop.Telepathy.Connection.Interface.Requests;org.freedesktop.Telepathy.Connection.Interface.SimplePresence;org.freedesktop.Telepathy.Connection.Interface.Contacts;
+RequestableChannelClasses=org.freedesktop.Telepathy.Channel.Type.Text
+VCardField=x-signal
+EnglishName=Signal
+Icon=icon-m-service-signal
