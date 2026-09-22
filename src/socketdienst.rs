@@ -11,8 +11,8 @@
 //! muessen deshalb in der Reihenfolge der Fragen kommen, und genau eine
 //! Frage darf offen sein. Darum der Mutex um das Fragen.
 //!
-//! Diese Daemons bleiben, wie sie sind. Sie zu ersetzen waere ein
-//! zweites Projekt, und sie tun ihre Arbeit.
+//! Telegram laeuft inzwischen ueber Drahtpost -- dasselbe Protokoll,
+//! in Rust statt Python. Matrix haengt noch am Python-Daemon.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -26,17 +26,26 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Wo ein Daemon liegt und wie er gestartet wird.
 pub struct Beschreibung {
+    /// Ein eigenstaendiges Programm, wenn es eines gibt. Es hat Vorrang.
+    pub programm: Option<&'static str>,
     pub skript: &'static str,
     pub socket: &'static str,
 }
 
 pub fn beschreibung(protokoll: &str) -> Option<Beschreibung> {
     match protokoll {
+        // Drahtpost spricht denselben Socket und dieselben Befehle wie
+        // telegram_daemon.py, braucht dafuer aber ein paar Megabyte statt
+        // 55. Liegt es nicht auf dem Geraet, bleibt der Python-Daemon --
+        // die Bruecke soll nicht daran haengen, dass ein zweites Paket
+        // installiert ist.
         "telegram" => Some(Beschreibung {
+            programm: Some("/opt/drahtpost/drahtpost"),
             skript: "/opt/pytelegram/telegram_daemon.py",
             socket: ".pytelegram/daemon.sock",
         }),
         "matrix" => Some(Beschreibung {
+            programm: None,
             skript: "/opt/pymatrix/matrix_daemon.py",
             socket: ".pymatrix/daemon.sock",
         }),
@@ -70,13 +79,25 @@ impl SocketDienst {
         let pfad = socketpfad(b.socket);
 
         if UnixStream::connect(&pfad).await.is_err() {
-            if !std::path::Path::new(b.skript).exists() {
+            let eigen = b
+                .programm
+                .filter(|p| std::path::Path::new(p).exists());
+            if eigen.is_none() && !std::path::Path::new(b.skript).exists() {
                 return Err(format!("Daemon fehlt: {}", b.skript));
             }
             let _ = std::fs::remove_file(&pfad);
-            eprintln!("{protokoll}: starte Daemon");
-            let mut befehl = tokio::process::Command::new("/opt/wunderw/bin/python3.11");
-            befehl.arg(b.skript);
+            let mut befehl = match eigen {
+                Some(p) => {
+                    eprintln!("{protokoll}: starte {p}");
+                    tokio::process::Command::new(p)
+                }
+                None => {
+                    eprintln!("{protokoll}: starte Daemon");
+                    let mut c = tokio::process::Command::new("/opt/wunderw/bin/python3.11");
+                    c.arg(b.skript);
+                    c
+                }
+            };
             befehl.env("PYTHONIOENCODING", "utf-8");
             befehl.stdout(std::process::Stdio::null());
             befehl.stderr(std::process::Stdio::null());
