@@ -98,7 +98,14 @@ impl Hintergrund {
                         (c.jid, name)
                     })
                     .collect(),
-                Err(_) => HashMap::new(),
+                Err(e) => {
+                    // Nicht verschlucken. Eine leere Chatliste sieht aus
+                    // wie "der Dienst hat nichts", ist aber oft "die
+                    // Antwort war nicht zu lesen" -- und danach sucht man
+                    // an der falschen Stelle.
+                    eprintln!("Chatliste nicht lesbar: {e}");
+                    HashMap::new()
+                }
             },
             Hintergrund::Socket { dienst, .. } => {
                 let befehl = if dienst.protokoll() == "matrix" {

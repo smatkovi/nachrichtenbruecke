@@ -17,3 +17,19 @@ RequestableChannelClasses=org.freedesktop.Telepathy.Channel.Type.Text
 VCardField=x-signal
 EnglishName=Signal
 Icon=icon-m-service-signal
+
+[Protocol telegram]
+param-account=s required
+ConnectionInterfaces=org.freedesktop.Telepathy.Connection.Interface.Requests;org.freedesktop.Telepathy.Connection.Interface.SimplePresence;org.freedesktop.Telepathy.Connection.Interface.Contacts;
+RequestableChannelClasses=org.freedesktop.Telepathy.Channel.Type.Text
+VCardField=x-telegram
+EnglishName=Telegram
+Icon=icon-m-service-telegram
+
+[Protocol matrix]
+param-account=s required
+ConnectionInterfaces=org.freedesktop.Telepathy.Connection.Interface.Requests;org.freedesktop.Telepathy.Connection.Interface.SimplePresence;org.freedesktop.Telepathy.Connection.Interface.Contacts;
+RequestableChannelClasses=org.freedesktop.Telepathy.Channel.Type.Text
+VCardField=x-matrix
+EnglishName=Matrix
+Icon=icon-m-service-matrix

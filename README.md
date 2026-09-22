@@ -61,13 +61,28 @@ und `matrix_daemon.py` mit 12 MB.
 
 ## Stand
 
-Signal läuft. Auf dem Gerät: Konto `bruecke/signal/signal0` verbunden,
-96 Chats bekannt, Kanäle werden angelegt — bei **1,5 MB** statt pybridges
-neun.
+Alle vier Protokolle laufen über die Brücke: WhatsApp 50 Chats, Signal 96,
+Telegram 200, Matrix 52. pybridge ist abgeschaltet.
+
+Was das gebracht hat:
+
+| | vorher | nachher |
+|---|---|---|
+| pybridge | 9,1 MB | — |
+| whatsapp_daemon.py | 5,9 MB | — |
+| signal_daemon.py | 5,3 MB | — |
+| telegram_daemon.py | 57,9 MB | 57,9 MB |
+| matrix_daemon.py | 12,5 MB | 12,5 MB |
+| Brücke | — | 1,9 MB |
+| **zusammen** | **~90 MB** | **~72 MB** |
+
+Die beiden großen Posten bleiben: die Daemons von Telegram und Matrix.
+Sie in Rust neu zu schreiben hieße, MTProto und das Matrix-Protokoll
+mitzubringen — ein eigenes Projekt, aber danach wären es keine 20 MB
+mehr, sondern zwei.
 
 Noch nicht geprüft: ob Nachrichten in der Nachrichten-App ankommen und ob
-sich aus ihr heraus senden lässt. WhatsApp, Telegram und Matrix sind
-angelegt, aber noch nicht in Betrieb genommen.
+sich aus ihr heraus senden lässt.
 
 Eine Stolperstelle, die Tage kosten kann: eine verbundene Verbindung
 braucht einen **gültigen eigenen Griff**. Bleibt `SelfHandle` null,

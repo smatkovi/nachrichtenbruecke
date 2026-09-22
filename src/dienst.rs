@@ -123,7 +123,21 @@ impl Dienst {
             if !erste.contains(" 200 ") {
                 return Err(format!("HTTP: {erste}"));
             }
-            Ok(koerper.to_string())
+            // Stueckweise Uebertragung ist bei HTTP/1.1 nicht die
+            // Ausnahme, sondern der Normalfall, wenn der Absender die
+            // Laenge nicht vorher kennt. Das Go-Backend von WhatsApp
+            // macht genau das; der Koerper begann dann mit "3895\r\n",
+            // einer Chunk-Groesse in Hexadezimal, und der JSON-Leser
+            // meldete "invalid type: integer". Der Dienst von Signal
+            // schickt feste Laengen -- deshalb fiel es dort nie auf.
+            let stueckweise = kopf
+                .to_lowercase()
+                .contains("transfer-encoding: chunked");
+            if stueckweise {
+                Ok(entstuecken(koerper))
+            } else {
+                Ok(koerper.to_string())
+            }
         };
         match tokio::time::timeout(frist, arbeit).await {
             Ok(r) => r,
@@ -133,7 +147,10 @@ impl Dienst {
 
     pub async fn chats(&self) -> Result<Vec<Chat>, String> {
         let roh = self.hole_roh("/chats", Duration::from_secs(20)).await?;
-        serde_json::from_str(&roh).map_err(|e| e.to_string())
+        serde_json::from_str(&roh).map_err(|e| {
+            let anfang: String = roh.chars().take(120).collect();
+            format!("{e} -- Anfang der Antwort: {anfang:?}")
+        })
     }
 
     pub async fn nachrichten(&self, jid: &str) -> Result<Vec<Nachricht>, String> {
@@ -183,6 +200,34 @@ fn kodieren(s: &str) -> String {
             }
             _ => aus.push_str(&format!("%{b:02X}")),
         }
+    }
+    aus
+}
+
+/// Setzt einen stueckweise uebertragenen Koerper wieder zusammen.
+///
+/// Jedes Stueck beginnt mit seiner Laenge in Hexadezimal, gefolgt von
+/// CRLF, dann die Daten, dann wieder CRLF. Ein Stueck der Laenge null
+/// beendet den Koerper.
+fn entstuecken(roh: &str) -> String {
+    let mut aus = String::with_capacity(roh.len());
+    let mut rest = roh;
+    loop {
+        let Some((kopf, danach)) = rest.split_once("\r\n") else { break };
+        // Nach der Laenge koennen Erweiterungen stehen; sie gehen uns
+        // nichts an.
+        let laengentext = kopf.split(';').next().unwrap_or("").trim();
+        let Ok(laenge) = usize::from_str_radix(laengentext, 16) else { break };
+        if laenge == 0 {
+            break;
+        }
+        if danach.len() < laenge {
+            // Unvollstaendig -- lieber das Bekannte als gar nichts.
+            aus.push_str(danach);
+            break;
+        }
+        aus.push_str(&danach[..laenge]);
+        rest = danach[laenge..].trim_start_matches("\r\n");
     }
     aus
 }
