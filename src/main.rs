@@ -35,16 +35,39 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 mod dienst;
+mod kanal;
 mod kennungen;
+mod socketdienst;
+mod verbindung;
 
 pub const CM_NAME: &str = "bruecke";
 pub const CM_BUS: &str = "org.freedesktop.Telepathy.ConnectionManager.bruecke";
 pub const CM_PFAD: &str = "/org/freedesktop/Telepathy/ConnectionManager/bruecke";
 
 pub const IF_CM: &str = "org.freedesktop.Telepathy.ConnectionManager";
+pub const IF_VERBINDUNG: &str = "org.freedesktop.Telepathy.Connection";
+pub const IF_KANAL: &str = "org.freedesktop.Telepathy.Channel";
+pub const IF_TEXT: &str = "org.freedesktop.Telepathy.Channel.Type.Text";
+pub const IF_REQUESTS: &str =
+    "org.freedesktop.Telepathy.Connection.Interface.Requests";
+pub const IF_PRESENCE: &str =
+    "org.freedesktop.Telepathy.Connection.Interface.SimplePresence";
+pub const IF_CONTACTS: &str =
+    "org.freedesktop.Telepathy.Connection.Interface.Contacts";
+
+pub const GRIFF_KONTAKT: u32 = 1;
+
+pub const STATUS_VERBUNDEN: u32 = 0;
+pub const STATUS_VERBINDET: u32 = 1;
+pub const STATUS_GETRENNT: u32 = 2;
 
 /// Die Protokolle, die dieser Manager traegt.
-pub const PROTOKOLLE: [&str; 2] = ["whatsapp", "signal"];
+///
+/// Zwei Wege zum Hintergrund: WhatsApp und Signal sprechen HTTP mit
+/// unseren eigenen Diensten, Telegram und Matrix Zeilen-JSON ueber einen
+/// Unix-Socket mit den vorhandenen Python-Daemons. Letztere bleiben, wie
+/// sie sind -- sie zu ersetzen waere ein zweites Projekt.
+pub const PROTOKOLLE: [&str; 4] = ["whatsapp", "signal", "telegram", "matrix"];
 
 pub fn protokoll_bekannt(p: &str) -> bool {
     PROTOKOLLE.contains(&p)
@@ -113,6 +136,37 @@ impl Manager {
         pfad: zbus::zvariant::ObjectPath<'_>,
         protokoll: &str,
     ) -> zbus::Result<()>;
+}
+
+/// Die Eigenschaften eines Kanals, wie Telepathy sie erwartet.
+///
+/// Sie stehen an mehreren Stellen gleich -- beim Anlegen, beim Melden und
+/// in der Channels-Eigenschaft. Einmal geschrieben statt dreimal.
+pub fn kanal_eigenschaften(
+    z: &verbindung::Zustand,
+    griff: u32,
+    _pfad: &str,
+) -> HashMap<String, zbus::zvariant::OwnedValue> {
+    use zbus::zvariant::Value;
+    let kennung = z.kennungen.name(griff);
+    let mut m: HashMap<String, zbus::zvariant::OwnedValue> = HashMap::new();
+    m.insert(format!("{IF_KANAL}.ChannelType"),
+             Value::from(IF_TEXT).try_into().unwrap());
+    m.insert(format!("{IF_KANAL}.TargetHandleType"),
+             Value::from(GRIFF_KONTAKT).try_into().unwrap());
+    m.insert(format!("{IF_KANAL}.TargetHandle"),
+             Value::from(griff).try_into().unwrap());
+    m.insert(format!("{IF_KANAL}.TargetID"),
+             Value::from(kennung.clone()).try_into().unwrap());
+    m.insert(format!("{IF_KANAL}.Requested"),
+             Value::from(false).try_into().unwrap());
+    m.insert(format!("{IF_KANAL}.InitiatorHandle"),
+             Value::from(griff).try_into().unwrap());
+    m.insert(format!("{IF_KANAL}.InitiatorID"),
+             Value::from(kennung).try_into().unwrap());
+    m.insert(format!("{IF_KANAL}.Interfaces"),
+             Value::from(vec![IF_TEXT.to_string()]).try_into().unwrap());
+    m
 }
 
 #[tokio::main]

@@ -36,10 +36,36 @@ dem **Anzeigenamen**. Zwei Kontakte gleichen Namens fallen dann zusammen,
 und wer seinen Namen ändert, bekommt einen neuen Gesprächsfaden. Hier ist
 die Chat-Kennung der Schlüssel, der Name nur eine Beschriftung.
 
+## Vier Protokolle, zwei Wege
+
+WhatsApp und Signal sprechen HTTP mit den Diensten von
+[harbour-whatsapp-meego](https://github.com/smatkovi/harbour-whatsapp-meego)
+und [Fluesterwind](https://github.com/smatkovi/fluesterwind) — direkt,
+ohne Übersetzer dazwischen.
+
+Telegram und Matrix hängen an den vorhandenen Python-Daemons
+(`pytelegram`, `pymatrix`) über einen Unix-Socket mit Zeilen-JSON. Die
+bleiben, wie sie sind; sie zu ersetzen wäre ein zweites Projekt.
+
+Was das an Platz spart, sobald es trägt:
+
+| | heute | danach |
+|---|---|---|
+| pybridge | 9 MB | — |
+| whatsapp_daemon.py | 6 MB | — |
+| signal_daemon.py | 5 MB | — |
+| Brücke | — | 1 MB |
+
+Die beiden großen Posten bleiben vorerst: `telegram_daemon.py` mit 55 MB
+und `matrix_daemon.py` mit 12 MB.
+
 ## Stand
 
-Früh. Der Manager läuft auf dem Gerät, wird über D-Bus aktiviert und
-meldet seine Protokolle. Verbindungen und Kanäle fehlen noch.
+Der Manager läuft auf dem Gerät, wird über D-Bus aktiviert und meldet
+seine vier Protokolle. Die Telepathy-Objekte sind geschrieben —
+Verbindung, Anfragen, Anwesenheit, Kontakte, Textkanäle —, aber noch
+nicht verdrahtet: die Schleife, die sie anlegt, den Hintergrund abfragt
+und Nachrichten an CommHistory meldet, fehlt.
 
 ## Bauen
 
