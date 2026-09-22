@@ -37,7 +37,7 @@ impl Kanal {
     async fn close(&self) {}
 
     #[zbus(signal)]
-    async fn closed(emitter: &zbus::object_server::SignalEmitter<'_>) -> zbus::Result<()>;
+    pub async fn closed(emitter: &zbus::object_server::SignalEmitter<'_>) -> zbus::Result<()>;
 
     async fn get_channel_type(&self) -> String {
         IF_TEXT.to_string()
@@ -125,7 +125,7 @@ impl Text {
     }
 
     #[zbus(signal)]
-    async fn received(
+    pub async fn received(
         emitter: &zbus::object_server::SignalEmitter<'_>,
         nummer: u32,
         zeit: u32,
@@ -136,7 +136,7 @@ impl Text {
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn sent(
+    pub async fn sent(
         emitter: &zbus::object_server::SignalEmitter<'_>,
         zeit: u32,
         art: u32,
@@ -144,7 +144,7 @@ impl Text {
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn send_error(
+    pub async fn send_error(
         emitter: &zbus::object_server::SignalEmitter<'_>,
         fehler: u32,
         zeit: u32,

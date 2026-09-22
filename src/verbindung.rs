@@ -125,14 +125,14 @@ impl Verbindung {
     // die Eigenschaft "Status" selbst ein status_changed, und zwei
     // gleichnamige Funktionen vertraegt ein Typ nicht.
     #[zbus(signal, name = "StatusChanged")]
-    async fn tp_status_changed(
+    pub async fn tp_status_changed(
         emitter: &zbus::object_server::SignalEmitter<'_>,
         status: u32,
         grund: u32,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn new_channel(
+    pub async fn new_channel(
         emitter: &zbus::object_server::SignalEmitter<'_>,
         pfad: zbus::zvariant::ObjectPath<'_>,
         art: &str,
@@ -233,7 +233,7 @@ impl Anfragen {
     }
 
     #[zbus(signal)]
-    async fn new_channels(
+    pub async fn new_channels(
         emitter: &zbus::object_server::SignalEmitter<'_>,
         kanaele: Vec<(
             zbus::zvariant::ObjectPath<'_>,
@@ -319,7 +319,7 @@ impl Anwesenheit {
     }
 
     #[zbus(signal)]
-    async fn presences_changed(
+    pub async fn presences_changed(
         emitter: &zbus::object_server::SignalEmitter<'_>,
         anwesenheiten: HashMap<u32, (u32, String, String)>,
     ) -> zbus::Result<()>;

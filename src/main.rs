@@ -35,8 +35,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 mod dienst;
+mod hintergrund;
 mod kanal;
 mod kennungen;
+mod lauf;
 mod socketdienst;
 mod verbindung;
 
@@ -106,6 +108,7 @@ impl Manager {
 
     async fn request_connection(
         &self,
+        #[zbus(connection)] bus: &zbus::Connection,
         protokoll: &str,
         _parameter: HashMap<String, zbus::zvariant::OwnedValue>,
     ) -> zbus::fdo::Result<(String, zbus::zvariant::OwnedObjectPath)> {
@@ -117,12 +120,79 @@ impl Manager {
         let pfad = format!(
             "/org/freedesktop/Telepathy/Connection/{CM_NAME}/{protokoll}/{protokoll}"
         );
-        let bus = format!(
+        let busname = format!(
             "org.freedesktop.Telepathy.Connection.{CM_NAME}.{protokoll}.{protokoll}"
         );
+
+        // Schon einmal angefordert? Dann dieselbe zurueckgeben -- eine
+        // zweite Verbindung desselben Kontos waere ein zweiter Draht zum
+        // Dienst, und davon wird nichts besser.
+        {
+            let mut v = self.verbindungen.lock().await;
+            if let Some((b, p)) = v.get(protokoll) {
+                return Ok((
+                    b.clone(),
+                    zbus::zvariant::ObjectPath::try_from(p.clone())
+                        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?
+                        .into(),
+                ));
+            }
+            v.insert(protokoll.to_string(), (busname.clone(), pfad.clone()));
+        }
+
         println!("Verbindung angefordert: {protokoll}");
+
+        let z: verbindung::GeteilterZustand =
+            std::sync::Arc::new(Mutex::new(verbindung::Zustand::neu(protokoll)));
+        let (auftrag_an, auftrag_von) = tokio::sync::mpsc::unbounded_channel();
+        let (kanal_an, kanal_von) = tokio::sync::mpsc::unbounded_channel();
+
+        // Alle vier Schnittstellen liegen unter derselben Adresse.
+        let server = bus.object_server();
+        server
+            .at(pfad.clone(), verbindung::Verbindung {
+                z: z.clone(),
+                auftraege: auftrag_an.clone(),
+            })
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        let _ = server
+            .at(pfad.clone(), verbindung::Anfragen {
+                z: z.clone(),
+                kanal_anlegen: kanal_an,
+            })
+            .await;
+        let _ = server
+            .at(pfad.clone(), verbindung::Anwesenheit {
+                z: z.clone(),
+                auftraege: auftrag_an.clone(),
+            })
+            .await;
+        let _ = server
+            .at(pfad.clone(), verbindung::Kontakte { z: z.clone() })
+            .await;
+
+        // Der eigene Bus-Name der Verbindung. Mission Control spricht sie
+        // darunter an, nicht unter dem des Managers.
+        let _ = bus
+            .request_name_with_flags(
+                busname.as_str(),
+                zbus::fdo::RequestNameFlags::DoNotQueue.into(),
+            )
+            .await;
+
+        let lauf = lauf::Lauf {
+            bus: bus.clone(),
+            z: z.clone(),
+            auftraege: auftrag_von,
+            kanal_wuensche: kanal_von,
+            senden_an: auftrag_an,
+            kanalzustaende: HashMap::new(),
+        };
+        tokio::spawn(lauf.laufen());
+
         Ok((
-            bus,
+            busname,
             zbus::zvariant::ObjectPath::try_from(pfad)
                 .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?
                 .into(),

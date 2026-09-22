@@ -54,19 +54,19 @@ struct Ereignis {
 /// Ein Dienst, erreichbar auf einem von wenigen Ports.
 #[derive(Clone)]
 pub struct Dienst {
-    pub protokoll: &'static str,
+    pub protokoll: String,
     ports: &'static [u16],
     port: u16,
 }
 
 impl Dienst {
-    pub fn neu(protokoll: &'static str) -> Option<Self> {
+    pub fn neu(protokoll: &str) -> Option<Self> {
         let ports: &'static [u16] = match protokoll {
             "whatsapp" => &[8085, 8086, 8087, 8088, 8089],
             "signal" => &[8095, 8096, 8097, 8098, 8099],
             _ => return None,
         };
-        Some(Dienst { protokoll, ports, port: 0 })
+        Some(Dienst { protokoll: protokoll.to_string(), ports, port: 0 })
     }
 
     /// Sucht den Dienst. Der zuletzt gefundene Port wird zuerst probiert.

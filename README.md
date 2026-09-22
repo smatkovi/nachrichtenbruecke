@@ -61,11 +61,19 @@ und `matrix_daemon.py` mit 12 MB.
 
 ## Stand
 
-Der Manager läuft auf dem Gerät, wird über D-Bus aktiviert und meldet
-seine vier Protokolle. Die Telepathy-Objekte sind geschrieben —
-Verbindung, Anfragen, Anwesenheit, Kontakte, Textkanäle —, aber noch
-nicht verdrahtet: die Schleife, die sie anlegt, den Hintergrund abfragt
-und Nachrichten an CommHistory meldet, fehlt.
+Signal läuft. Auf dem Gerät: Konto `bruecke/signal/signal0` verbunden,
+96 Chats bekannt, Kanäle werden angelegt — bei **1,5 MB** statt pybridges
+neun.
+
+Noch nicht geprüft: ob Nachrichten in der Nachrichten-App ankommen und ob
+sich aus ihr heraus senden lässt. WhatsApp, Telegram und Matrix sind
+angelegt, aber noch nicht in Betrieb genommen.
+
+Eine Stolperstelle, die Tage kosten kann: eine verbundene Verbindung
+braucht einen **gültigen eigenen Griff**. Bleibt `SelfHandle` null,
+antwortet sie zwar auf alles und meldet `GetStatus() == 0`, gilt dem
+Kontoverwalter aber trotzdem als nicht verbunden — in der Oberfläche
+steht dann „offline", ohne dass irgendwo ein Fehler auftaucht.
 
 ## Bauen
 
