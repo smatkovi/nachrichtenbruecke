@@ -74,7 +74,7 @@ impl SocketDienst {
                 return Err(format!("Daemon fehlt: {}", b.skript));
             }
             let _ = std::fs::remove_file(&pfad);
-            println!("{protokoll}: starte Daemon");
+            eprintln!("{protokoll}: starte Daemon");
             let mut befehl = tokio::process::Command::new("/opt/wunderw/bin/python3.11");
             befehl.arg(b.skript);
             befehl.env("PYTHONIOENCODING", "utf-8");
@@ -134,7 +134,7 @@ impl SocketDienst {
                     _ => break,
                 }
             }
-            println!("{name}: Daemon-Verbindung beendet");
+            eprintln!("{name}: Daemon-Verbindung beendet");
             let _ = ereignisse.send(json!({"event": "disconnected"}));
         });
 

@@ -64,10 +64,10 @@ impl Lauf {
                                         z.selbst = g;
                                         let p = z.protokoll.clone();
                                         z.kennungen.sichern(&p);
-                                        println!("{protokoll}: eigener Griff {g} ({name})");
+                                        eprintln!("{protokoll}: eigener Griff {g} ({name})");
                                     }
                                     namen = h.chats().await;
-                                    println!("{protokoll}: {} Chats bekannt", namen.len());
+                                    eprintln!("{protokoll}: {} Chats bekannt", namen.len());
                                     self.namen_uebernehmen(&namen).await;
                                     hintergrund = Some(h);
                                     self.status_melden(STATUS_VERBUNDEN).await;
@@ -131,7 +131,7 @@ impl Lauf {
         if let Ok(emitter) = SignalEmitter::new(&self.bus, pfad) {
             let _ = Verbindung::tp_status_changed(&emitter, status, 0).await;
         }
-        println!("Zustand: {status}");
+        eprintln!("Zustand: {status}");
     }
 
     async fn namen_uebernehmen(&self, namen: &HashMap<String, String>) {
@@ -200,7 +200,7 @@ impl Lauf {
                 let _ = Anfragen::new_channels(&emitter, vec![(p, eigenschaften)]).await;
             }
         }
-        println!("Kanal angelegt: {pfad}");
+        eprintln!("Kanal angelegt: {pfad}");
         pfad
     }
 
@@ -303,45 +303,65 @@ impl Lauf {
         let konto = self.kontopfad().await;
         let Ok(kontopfad) = zbus::zvariant::ObjectPath::try_from(konto) else { return };
 
-        let kanaele = vec![(kanalpfad, eigenschaften)];
-        let leer: HashMap<String, zbus::zvariant::OwnedValue> = HashMap::new();
-        let keine: Vec<zbus::zvariant::ObjectPath> = Vec::new();
-        let wurzel = zbus::zvariant::ObjectPath::try_from("/").unwrap();
+        let bus = self.bus.clone();
+        let kanalpfad = kanalpfad.to_owned();
+        let connpfad = connpfad.to_owned();
+        let kontopfad = kontopfad.to_owned();
 
-        // CommHistory schreibt den Verlauf.
-        let _ = self
-            .bus
-            .call_method(
+        // Nebenlaeufig und mit Frist.
+        //
+        // CommHistory antwortet auf diesem Geraet nicht einmal auf
+        // Introspect, und zbus wartet ohne Zeitgrenze -- ein Aufruf in
+        // der Schleife legte sie damit still. pybridge startet dafuer
+        // einen Wegwerfprozess; hier genuegt eine eigene Aufgabe.
+        //
+        // Die Antwort interessiert ohnehin nicht: entweder CommHistory
+        // nimmt den Kanal an oder nicht, ruecknehmen liesse sich nichts.
+        tokio::spawn(async move {
+            // Die Pfade muessen die Aufrufe ueberleben -- als
+            // Zwischenwerte im Argument waeren sie vorher fort.
+            let kp = kanalpfad.as_ref();
+            let cp = connpfad.as_ref();
+            let kop = kontopfad.as_ref();
+            let kanaele = vec![(kp, eigenschaften)];
+            let leer: HashMap<String, zbus::zvariant::OwnedValue> = HashMap::new();
+            let keine: Vec<zbus::zvariant::ObjectPath> = Vec::new();
+            let wurzel = zbus::zvariant::ObjectPath::try_from("/").unwrap();
+
+            let args_beobachten = (&kop, &cp, &kanaele, &wurzel, &keine, &leer);
+            let beobachten = bus.call_method(
                 Some("org.freedesktop.Telepathy.Client.CommHistory"),
                 "/org/freedesktop/Telepathy/Client/CommHistory",
                 Some("org.freedesktop.Telepathy.Client.Observer"),
                 "ObserveChannels",
-                &(
-                    &kontopfad,
-                    &connpfad,
-                    &kanaele,
-                    &wurzel,
-                    &keine,
-                    &leer,
-                ),
-            )
-            .await;
+                &args_beobachten,
+            );
+            match tokio::time::timeout(std::time::Duration::from_secs(20), beobachten)
+                .await
+            {
+                Ok(Ok(_)) => eprintln!("CommHistory hat Griff {griff} angenommen"),
+                Ok(Err(e)) => eprintln!("CommHistory: {e}"),
+                Err(_) => eprintln!("CommHistory antwortet nicht (Griff {griff})"),
+            }
 
-        if nur_beobachten {
-            return;
-        }
+            if nur_beobachten {
+                return;
+            }
 
-        // Die Nachrichten-App zeigt die Unterhaltung.
-        let _ = self
-            .bus
-            .call_method(
+            let args_zeigen = (&kop, &cp, &kanaele, &keine, 0u64, &leer);
+            let zeigen = bus.call_method(
                 Some("org.freedesktop.Telepathy.Client.Messaging"),
                 "/org/freedesktop/Telepathy/Client/Messaging",
                 Some("org.freedesktop.Telepathy.Client.Handler"),
                 "HandleChannels",
-                &(&kontopfad, &connpfad, &kanaele, &keine, 0u64, &leer),
-            )
-            .await;
+                &args_zeigen,
+            );
+            match tokio::time::timeout(std::time::Duration::from_secs(20), zeigen).await {
+                Ok(Ok(_)) => eprintln!("Nachrichten-App hat Griff {griff} angenommen"),
+                Ok(Err(e)) => eprintln!("Nachrichten-App: {e}"),
+                Err(_) => eprintln!("Nachrichten-App antwortet nicht (Griff {griff})"),
+            }
+        });
     }
 
     /// Der Pfad unseres Kontos beim Kontoverwalter.

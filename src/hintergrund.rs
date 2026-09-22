@@ -46,7 +46,7 @@ impl Hintergrund {
                 if !d.finden().await {
                     return Err(format!("{protokoll}: Dienst antwortet nicht"));
                 }
-                println!("{protokoll}: Dienst auf Port {}", d.port());
+                eprintln!("{protokoll}: Dienst auf Port {}", d.port());
                 Ok(Hintergrund::Http {
                     dienst: d,
                     stand: HashMap::new(),
@@ -79,7 +79,7 @@ impl Hintergrund {
             let m = self.chats_einmal().await;
             if !m.is_empty() {
                 if versuch > 0 {
-                    println!("Chatliste kam erst nach {} s", versuch * 2);
+                    eprintln!("Chatliste kam erst nach {} s", versuch * 2);
                 }
                 return m;
             }
@@ -246,7 +246,7 @@ impl Hintergrund {
                 stand.insert(c.jid.clone(), c.last_time);
             }
             *eingerichtet = true;
-            println!("Erstlauf: {} Chats als gelesen vermerkt", stand.len());
+            eprintln!("Erstlauf: {} Chats als gelesen vermerkt", stand.len());
             return Vec::new();
         }
 

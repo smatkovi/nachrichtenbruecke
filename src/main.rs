@@ -140,7 +140,7 @@ impl Manager {
             v.insert(protokoll.to_string(), (busname.clone(), pfad.clone()));
         }
 
-        println!("Verbindung angefordert: {protokoll}");
+        eprintln!("Verbindung angefordert: {protokoll}");
 
         let z: verbindung::GeteilterZustand =
             std::sync::Arc::new(Mutex::new(verbindung::Zustand::neu(protokoll)));
@@ -251,7 +251,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .await?;
 
-    println!("🌉 {CM_BUS} bereit");
+    // Das Protokoll geht auf die Fehlerausgabe, nicht auf die
+    // Standardausgabe: letztere ist bei einer Umleitung blockgepuffert,
+    // und dann steht die entscheidende Zeile noch im Puffer, waehrend man
+    // im Protokoll nach ihr sucht.
+    eprintln!("🌉 {CM_BUS} bereit");
     let _ = verbindung;
     std::future::pending::<()>().await;
     Ok(())
