@@ -11,8 +11,10 @@
 //! muessen deshalb in der Reihenfolge der Fragen kommen, und genau eine
 //! Frage darf offen sein. Darum der Mutex um das Fragen.
 //!
-//! Telegram laeuft inzwischen ueber Drahtpost -- dasselbe Protokoll,
-//! in Rust statt Python. Matrix haengt noch am Python-Daemon.
+//! Beide laufen inzwischen ueber eigene Daemons in Rust -- Telegram
+//! ueber Drahtpost, Matrix ueber Maschendraht. Dasselbe Protokoll,
+//! dieselben Befehle, ein Zehntel des Speichers. Die Python-Skripte
+//! bleiben als Rueckfallweg liegen.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -34,18 +36,18 @@ pub struct Beschreibung {
 
 pub fn beschreibung(protokoll: &str) -> Option<Beschreibung> {
     match protokoll {
-        // Drahtpost spricht denselben Socket und dieselben Befehle wie
-        // telegram_daemon.py, braucht dafuer aber ein paar Megabyte statt
-        // 55. Liegt es nicht auf dem Geraet, bleibt der Python-Daemon --
-        // die Bruecke soll nicht daran haengen, dass ein zweites Paket
-        // installiert ist.
+        // Drahtpost und Maschendraht sprechen denselben Socket und
+        // dieselben Befehle wie die Python-Daemons, brauchen dafuer aber
+        // ein paar Megabyte statt zweistelliger. Liegen sie nicht auf dem
+        // Geraet, bleibt der Python-Weg -- die Bruecke soll nicht daran
+        // haengen, dass ein zweites Paket installiert ist.
         "telegram" => Some(Beschreibung {
             programm: Some("/opt/drahtpost/drahtpost"),
             skript: "/opt/pytelegram/telegram_daemon.py",
             socket: ".pytelegram/daemon.sock",
         }),
         "matrix" => Some(Beschreibung {
-            programm: None,
+            programm: Some("/opt/maschendraht/maschendraht"),
             skript: "/opt/pymatrix/matrix_daemon.py",
             socket: ".pymatrix/daemon.sock",
         }),
