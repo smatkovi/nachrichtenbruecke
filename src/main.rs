@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
+mod meldung;
 mod dienst;
 mod hintergrund;
 mod kanal;
@@ -58,6 +59,8 @@ pub const IF_CONTACTS: &str =
     "org.freedesktop.Telepathy.Connection.Interface.Contacts";
 pub const IF_ALIASING: &str =
     "org.freedesktop.Telepathy.Connection.Interface.Aliasing";
+/// Eigene Schnittstelle: das Antippen einer Meldung landet hier.
+pub const IF_MELDUNG: &str = "org.smatkovi.Bruecke.Meldung";
 
 pub const GRIFF_KONTAKT: u32 = 1;
 
@@ -186,6 +189,11 @@ impl Manager {
             )
             .await;
 
+        // Der Meldungsdienst ist nicht lebenswichtig: fehlt er, laeuft
+        // alles weiter, nur ohne sichtbaren Hinweis.
+        let melder = meldung::Melder::neu(bus.clone()).await;
+        let (gelesen_an, gelesen) = tokio::sync::mpsc::unbounded_channel();
+
         let lauf = lauf::Lauf {
             bus: bus.clone(),
             z: z.clone(),
@@ -193,6 +201,9 @@ impl Manager {
             kanal_wuensche: kanal_von,
             senden_an: auftrag_an,
             kanalzustaende: HashMap::new(),
+            melder,
+            gelesen_an,
+            gelesen,
         };
         tokio::spawn(lauf.laufen());
 

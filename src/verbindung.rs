@@ -33,6 +33,8 @@ pub struct Zustand {
     /// Chat-Kennung -> Anzeigename.
     pub chats: HashMap<String, String>,
     pub selbst: u32,
+    /// Der Pfad unseres Kontos beim Kontoverwalter, einmal erfragt.
+    pub kontopfad: String,
 }
 
 impl Zustand {
@@ -56,6 +58,7 @@ impl Zustand {
                 % 10000) as u32,
             chats: HashMap::new(),
             selbst: 0,
+            kontopfad: String::new(),
         }
     }
 }

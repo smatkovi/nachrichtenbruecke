@@ -19,6 +19,11 @@ pub struct Lauf {
     pub senden_an: mpsc::UnboundedSender<Auftrag>,
     /// Kanalpfad -> Zustand, damit Nachrichten dorthin finden.
     pub kanalzustaende: HashMap<u32, Arc<Mutex<KanalZustand>>>,
+    /// Die sichtbaren Meldungen; None, wenn der Meldungsdienst fehlt.
+    pub melder: Option<crate::meldung::Melder>,
+    /// Kanaele, die sich als gelesen melden.
+    pub gelesen_an: mpsc::UnboundedSender<String>,
+    pub gelesen: mpsc::UnboundedReceiver<String>,
 }
 
 impl Lauf {
@@ -91,6 +96,13 @@ impl Lauf {
                             }
                         }
                         None => return,
+                    }
+                }
+
+                chat = self.gelesen.recv() => {
+                    let Some(chat) = chat else { return };
+                    if let Some(m) = self.melder.as_mut() {
+                        m.schliessen(&chat).await;
                     }
                 }
 
@@ -204,12 +216,41 @@ impl Lauf {
         }));
         self.kanalzustaende.insert(griff, kz.clone());
 
+        // Der Kontopfad wird einmal erfragt und behalten: der
+        // Kontoverwalter antwortet nicht immer schnell, und jeder Kanal
+        // braucht denselben.
+        let kontopfad = {
+            let vorhanden = self.z.lock().await.kontopfad.clone();
+            if vorhanden.is_empty() {
+                let p = self.kontopfad().await;
+                self.z.lock().await.kontopfad = p.clone();
+                p
+            } else {
+                vorhanden
+            }
+        };
+        let kennung_fuer_oeffner = kz.lock().await.kennung.clone();
+
         let server = self.bus.object_server();
         let _ = server.at(pfad.clone(), Kanal { z: kz.clone() }).await;
         let _ = server
             .at(
                 pfad.clone(),
-                Text { z: kz.clone(), senden: self.senden_kanal() },
+                Text {
+                    z: kz.clone(),
+                    senden: self.senden_kanal(),
+                    gelesen: self.gelesen_an.clone(),
+                },
+            )
+            .await;
+        let _ = server
+            .at(
+                pfad.clone(),
+                crate::kanal::Oeffner {
+                    bus: self.bus.clone(),
+                    kontopfad,
+                    kennung: kennung_fuer_oeffner,
+                },
             )
             .await;
 
@@ -287,6 +328,7 @@ impl Lauf {
         // In einer Gruppe den Absender voranstellen -- die
         // Nachrichten-App zeigt sonst nur den Gruppennamen, und man weiss
         // nicht, wer spricht.
+        let roh = n.text.clone();
         let text = if n.absender.is_empty() {
             n.text
         } else {
@@ -313,6 +355,13 @@ impl Lauf {
         if let Ok(emitter) = SignalEmitter::new(&self.bus, pfad.clone()) {
             let _ =
                 Text::received(&emitter, nummer, n.zeit as u32, griff, 0, 0, &text).await;
+        }
+
+        // Und sichtbar melden. Das taete sonst commhistory-daemon, der
+        // aber keinen Kanal annimmt -- siehe meldung.rs.
+        if let Some(m) = self.melder.as_mut() {
+            let name = namen.get(&n.chat).cloned().unwrap_or_default();
+            m.melden(&n.chat, &name, &n.absender, &roh, &pfad).await;
         }
 
         // An CommHistory melden, wenn es noetig ist.

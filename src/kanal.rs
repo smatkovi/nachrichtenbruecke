@@ -99,6 +99,9 @@ impl Kanal {
 pub struct Text {
     pub z: Arc<Mutex<KanalZustand>>,
     pub senden: tokio::sync::mpsc::UnboundedSender<(u32, String, String)>,
+    /// Sagt Bescheid, wenn der Chat gelesen wurde – dann verschwindet
+    /// seine Meldung.
+    pub gelesen: tokio::sync::mpsc::UnboundedSender<String>,
 }
 
 #[zbus::interface(name = "org.freedesktop.Telepathy.Channel.Type.Text")]
@@ -134,6 +137,7 @@ impl Text {
         let liste = z.ausstehend.clone();
         if loeschen {
             z.ausstehend.clear();
+            let _ = self.gelesen.send(z.kennung.clone());
         }
         liste
     }
@@ -141,6 +145,9 @@ impl Text {
     async fn acknowledge_pending_messages(&self, nummern: Vec<u32>) {
         let mut z = self.z.lock().await;
         z.ausstehend.retain(|m| !nummern.contains(&m.0));
+        if z.ausstehend.is_empty() {
+            let _ = self.gelesen.send(z.kennung.clone());
+        }
     }
 
     #[zbus(signal)]
@@ -174,3 +181,39 @@ impl Text {
 
 /// Damit der Kanal-Teil auch die Channel-Schnittstelle kennt.
 pub const _IF: &str = IF_KANAL;
+
+/// Was beim Antippen einer Meldung geschieht.
+///
+/// Die Aktion einer Meldung ist ein D-Bus-Aufruf in Textform, und zwar
+/// aus genau vier Woertern: Dienst, Pfad, Schnittstelle, Methode.
+/// Argumente liessen sich darin nicht verlaesslich unterbringen – also
+/// steht der Chat im Pfad. Dieses Objekt liegt auf demselben Pfad wie
+/// sein Kanal und weiss damit von selbst, welches Gespraech gemeint ist.
+#[derive(Clone)]
+pub struct Oeffner {
+    pub bus: zbus::Connection,
+    pub kontopfad: String,
+    pub kennung: String,
+}
+
+#[zbus::interface(name = "org.smatkovi.Bruecke.Meldung")]
+impl Oeffner {
+    async fn oeffnen(&self) {
+        // Die Nachrichten-App kennt den Kontopfad und die Kennung; mehr
+        // braucht sie nicht, um den richtigen Faden aufzuschlagen.
+        let args = (self.kontopfad.as_str(), self.kennung.as_str(), 1u32);
+        let ruf = self
+            .bus
+            .call_method(
+                Some("com.nokia.Messaging"),
+                "/",
+                Some("com.nokia.MessagingIf"),
+                "startConversation",
+                &args,
+            )
+            .await;
+        if let Err(e) = ruf {
+            eprintln!("Gespraech nicht zu oeffnen: {e}");
+        }
+    }
+}
