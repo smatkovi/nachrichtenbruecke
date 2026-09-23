@@ -224,9 +224,29 @@ impl Hintergrund {
         };
 
         // Lange Abfrage: kehrt zurueck, sobald sich im Dienst etwas tut.
+        //
+        // "Soll" ist das Wort. Ein Dienst, der sofort antwortet, statt zu
+        // warten, macht aus dieser Schleife einen Leerlauf mit voller
+        // Rechenzeit -- gemessen: Signal antwortete nach 10 ms, und
+        // Bruecke wie Dienst standen gemeinsam bei einem Fuenftel der
+        // CPU. Auf einem Telefon ist das der Akku.
         match dienst.ereignis(*folge).await {
             Ok(neu) => {
                 if neu == *folge {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    return Vec::new();
+                }
+                if neu < *folge {
+                    // Der Dienst hat neu angefangen und zaehlt wieder von
+                    // vorn. Unser Stand liegt dann in seiner Zukunft, und
+                    // er antwortet auf jede Abfrage sofort -- dieselbe
+                    // Schleife, nur aus dem anderen Grund.
+                    eprintln!(
+                        "Dienst zaehlt wieder von vorn ({} -> {neu}), Stand uebernommen",
+                        *folge
+                    );
+                    *folge = neu;
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     return Vec::new();
                 }
                 *folge = neu;

@@ -121,11 +121,18 @@ impl Verbindung {
     /// die Nachrichten-App beim Antworten einen Griff auf "Fabian
     /// Mistelberger" an, und der Dienst bekam einen Namen als
     /// Empfaengeradresse. Der Name gehoert in Aliasing, nicht hierher.
-    async fn inspect_handles(&self, _art: u32, griffe: Vec<u32>) -> Vec<String> {
+    async fn inspect_handles(&self, art: u32, griffe: Vec<u32>) -> Vec<String> {
         let z = self.z.lock().await;
         griffe
             .iter()
             .map(|g| {
+                if art != GRIFF_KONTAKT {
+                    return z
+                        .kennungen
+                        .sonstiger_name(*g)
+                        .unwrap_or_default()
+                        .to_string();
+                }
                 z.kennungen
                     .kennung(*g)
                     .map(|s| s.to_string())
@@ -134,26 +141,22 @@ impl Verbindung {
             .collect()
     }
 
-    /// Griffe zu Kennungen – aber nur fuer Kontakte.
+    /// Griffe zu Kennungen.
     ///
     /// Fuer Listen (Art 3: stored, publish, subscribe, deny) fragt der
     /// Kontoverwalter ebenfalls hier an. Frueher landeten die vier Namen
     /// im selben Zahlenraum wie die Kontakte und liessen sich danach als
-    /// Gespraech oeffnen. Wir tragen keine Kontaktlisten, also ist die
-    /// ehrliche Antwort ein Fehler.
-    async fn request_handles(
-        &self,
-        art: u32,
-        namen: Vec<String>,
-    ) -> zbus::fdo::Result<Vec<u32>> {
-        if art != GRIFF_KONTAKT {
-            return Err(zbus::fdo::Error::NotSupported(format!(
-                "nur Kontaktgriffe, nicht Art {art}"
-            )));
-        }
+    /// Gespraech oeffnen; einen Fehler zurueckzugeben brachte den
+    /// Kontoverwalter zum Wiederholen ohne Ende. Sie bekommen darum einen
+    /// eigenen Raum, aus dem kennung() nie etwas zurueckgibt.
+    async fn request_handles(&self, art: u32, namen: Vec<String>) -> Vec<u32> {
         let mut z = self.z.lock().await;
         let mut griffe = Vec::with_capacity(namen.len());
         for n in &namen {
+            if art != GRIFF_KONTAKT {
+                griffe.push(z.kennungen.sonstiger_griff(art, n));
+                continue;
+            }
             let (g, ueber_namen) = z.kennungen.aufloesen(n);
             if ueber_namen {
                 eprintln!("Griff ueber Anzeigenamen gefunden: {n:?} -> {g}");
@@ -162,7 +165,7 @@ impl Verbindung {
         }
         let p = z.protokoll.clone();
         z.kennungen.sichern(&p);
-        Ok(griffe)
+        griffe
     }
 
     async fn hold_handles(&self, _art: u32, _griffe: Vec<u32>) {}
@@ -246,6 +249,7 @@ impl Anfragen {
             .and_then(|v| String::try_from(v.clone()).ok())
             .unwrap_or_default();
         if !art.is_empty() && art != IF_TEXT {
+            eprintln!("Kanal abgelehnt: Art {art}");
             return Err(zbus::fdo::Error::NotSupported(format!(
                 "nur Textkanaele, nicht {art}"
             )));
@@ -255,6 +259,7 @@ impl Anfragen {
             .and_then(|v| u32::try_from(v.clone()).ok())
             .unwrap_or(GRIFF_KONTAKT);
         if griffart != GRIFF_KONTAKT {
+            eprintln!("Kanal abgelehnt: Griffart {griffart}");
             return Err(zbus::fdo::Error::NotSupported(format!(
                 "nur Kontaktgriffe, nicht Art {griffart}"
             )));
@@ -276,6 +281,7 @@ impl Anfragen {
             // leerer Kennung, und der Dienst bekam die leere Zeichenkette
             // als Empfaenger.
             if z.kennungen.kennung(griff).is_none() {
+                eprintln!("Kanal abgelehnt: unbekannter Griff {griff}");
                 return Err(zbus::fdo::Error::InvalidArgs(format!(
                     "unbekannter Griff {griff}"
                 )));

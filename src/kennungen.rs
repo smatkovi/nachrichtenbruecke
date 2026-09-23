@@ -33,6 +33,18 @@ pub struct Kennungen {
     /// Griff -> Anzeigename, nur zur Anzeige.
     #[serde(default)]
     namen: HashMap<u32, String>,
+    /// "<art>:<name>" -> Griff, fuer alles, was kein Kontakt ist.
+    ///
+    /// Der Kontoverwalter fragt mit Griffart 3 nach den Kontaktlisten
+    /// ("stored", "publish", "subscribe", "deny"). Ihm dafuer einen
+    /// Fehler zu geben, bringt ihn zum Wiederholen ohne Ende; ihm einen
+    /// Kontaktgriff zu geben, machte die vier Listen zu Gespraechen.
+    /// Also ein eigener Raum: eigene Nummern aus demselben Zaehler, aber
+    /// getrennt gefuehrt, damit kennung() sie nie zurueckgibt.
+    #[serde(default)]
+    sonstige: HashMap<String, u32>,
+    #[serde(default)]
+    sonstige_namen: HashMap<u32, String>,
 }
 
 impl Kennungen {
@@ -114,6 +126,24 @@ impl Kennungen {
         self.zu_griff.insert(kennung.to_string(), g);
         self.zu_kennung.insert(g, kennung.to_string());
         g
+    }
+
+    /// Ein Griff fuer etwas, das kein Kontakt ist (Griffart != 1).
+    pub fn sonstiger_griff(&mut self, art: u32, name: &str) -> u32 {
+        let schluessel = format!("{art}:{name}");
+        if let Some(g) = self.sonstige.get(&schluessel) {
+            return *g;
+        }
+        let g = self.naechster.max(1);
+        self.naechster = g + 1;
+        self.sonstige.insert(schluessel, g);
+        self.sonstige_namen.insert(g, name.to_string());
+        g
+    }
+
+    /// Wie ein solcher Griff heisst; fuer InspectHandles.
+    pub fn sonstiger_name(&self, griff: u32) -> Option<&str> {
+        self.sonstige_namen.get(&griff).map(|s| s.as_str())
     }
 
     pub fn kennung(&self, griff: u32) -> Option<&str> {
