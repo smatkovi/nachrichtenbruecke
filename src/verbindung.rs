@@ -11,8 +11,8 @@ use tokio::sync::Mutex;
 
 use crate::kennungen::Kennungen;
 use crate::{
-    GRIFF_KONTAKT, IF_CONTACTS, IF_KANAL, IF_PRESENCE, IF_REQUESTS, IF_TEXT,
-    STATUS_GETRENNT, STATUS_VERBINDET, STATUS_VERBUNDEN,
+    GRIFF_KONTAKT, IF_ALIASING, IF_CONTACTS, IF_KANAL, IF_PRESENCE, IF_REQUESTS,
+    IF_TEXT, STATUS_GETRENNT, STATUS_VERBINDET, STATUS_VERBUNDEN,
 };
 
 pub struct Zustand {
@@ -22,6 +22,13 @@ pub struct Zustand {
     pub kennungen: Kennungen,
     /// Griff -> Kanalpfad.
     pub kanaele: HashMap<u32, String>,
+    /// Griff -> Pfad, der einem Anfragenden schon genannt wurde.
+    ///
+    /// EnsureChannel muss den Pfad sofort zurueckgeben, angelegt wird der
+    /// Kanal aber erst in der Hauptschleife. Ohne diese Vormerkung zaehlt
+    /// dort die naechste Nummer noch einmal hoch, und der Anfragende haelt
+    /// einen Pfad in der Hand, unter dem nie etwas erscheint.
+    pub vorgemerkt: HashMap<u32, String>,
     pub naechster_kanal: u32,
     /// Chat-Kennung -> Anzeigename.
     pub chats: HashMap<String, String>,
@@ -39,6 +46,7 @@ impl Zustand {
             status: STATUS_GETRENNT,
             kennungen: Kennungen::laden(protokoll),
             kanaele: HashMap::new(),
+            vorgemerkt: HashMap::new(),
             // Wie bei pybridge aus der Uhr, damit Pfade aus frueheren
             // Laeufen nicht wiederverwendet werden.
             naechster_kanal: (std::time::SystemTime::now()
@@ -75,7 +83,7 @@ impl Verbindung {
 
     /// Trennen beendet nichts.
     ///
-    /// Mission Control trennt eine Verbindung bei jeder Gelegenheit --
+    /// Mission Control trennt eine Verbindung bei jeder Gelegenheit –
     /// beim Bildschirmschlaf etwa. Die Verbindung zum Dienst dabei
     /// abzubauen hiesse, jede eingehende Nachricht zu verpassen, bis
     /// jemand die App oeffnet. Der Zustand wird gemeldet, der Draht
@@ -93,6 +101,7 @@ impl Verbindung {
             IF_REQUESTS.to_string(),
             IF_PRESENCE.to_string(),
             IF_CONTACTS.to_string(),
+            IF_ALIASING.to_string(),
         ]
     }
 
@@ -104,17 +113,56 @@ impl Verbindung {
         self.z.lock().await.selbst
     }
 
+    /// Die KENNUNG zu einem Griff, nicht der Anzeigename.
+    ///
+    /// Das ist der Vertrag von Telepathy, und er hat einen Grund: was
+    /// hier herauskommt, kommt spaeter in RequestHandles und als
+    /// TargetID wieder herein. Gab man den Anzeigenamen zurueck, legte
+    /// die Nachrichten-App beim Antworten einen Griff auf "Fabian
+    /// Mistelberger" an, und der Dienst bekam einen Namen als
+    /// Empfaengeradresse. Der Name gehoert in Aliasing, nicht hierher.
     async fn inspect_handles(&self, _art: u32, griffe: Vec<u32>) -> Vec<String> {
         let z = self.z.lock().await;
-        griffe.iter().map(|g| z.kennungen.name(*g)).collect()
+        griffe
+            .iter()
+            .map(|g| {
+                z.kennungen
+                    .kennung(*g)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| z.kennungen.name(*g))
+            })
+            .collect()
     }
 
-    async fn request_handles(&self, _art: u32, namen: Vec<String>) -> Vec<u32> {
+    /// Griffe zu Kennungen – aber nur fuer Kontakte.
+    ///
+    /// Fuer Listen (Art 3: stored, publish, subscribe, deny) fragt der
+    /// Kontoverwalter ebenfalls hier an. Frueher landeten die vier Namen
+    /// im selben Zahlenraum wie die Kontakte und liessen sich danach als
+    /// Gespraech oeffnen. Wir tragen keine Kontaktlisten, also ist die
+    /// ehrliche Antwort ein Fehler.
+    async fn request_handles(
+        &self,
+        art: u32,
+        namen: Vec<String>,
+    ) -> zbus::fdo::Result<Vec<u32>> {
+        if art != GRIFF_KONTAKT {
+            return Err(zbus::fdo::Error::NotSupported(format!(
+                "nur Kontaktgriffe, nicht Art {art}"
+            )));
+        }
         let mut z = self.z.lock().await;
-        let griffe: Vec<u32> = namen.iter().map(|n| z.kennungen.griff(n)).collect();
+        let mut griffe = Vec::with_capacity(namen.len());
+        for n in &namen {
+            let (g, ueber_namen) = z.kennungen.aufloesen(n);
+            if ueber_namen {
+                eprintln!("Griff ueber Anzeigenamen gefunden: {n:?} -> {g}");
+            }
+            griffe.push(g);
+        }
         let p = z.protokoll.clone();
         z.kennungen.sichern(&p);
-        griffe
+        Ok(griffe)
     }
 
     async fn hold_handles(&self, _art: u32, _griffe: Vec<u32>) {}
@@ -152,6 +200,7 @@ impl Verbindung {
             IF_REQUESTS.to_string(),
             IF_PRESENCE.to_string(),
             IF_CONTACTS.to_string(),
+            IF_ALIASING.to_string(),
         ]
     }
 
@@ -188,6 +237,29 @@ impl Anfragen {
         zbus::zvariant::OwnedObjectPath,
         HashMap<String, zbus::zvariant::OwnedValue>,
     )> {
+        // Wir tragen genau eine Art Kanal. Ohne diese Pruefung wird aus
+        // EnsureChannel(ContactList, Art 3, "subscribe") ein Textkanal auf
+        // die Zeichenkette "subscribe" -- derselbe Weg, auf dem die vier
+        // Listennamen als Gespraechsfaeden in der Griffliste landeten.
+        let art = anfrage
+            .get(&format!("{IF_KANAL}.ChannelType"))
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .unwrap_or_default();
+        if !art.is_empty() && art != IF_TEXT {
+            return Err(zbus::fdo::Error::NotSupported(format!(
+                "nur Textkanaele, nicht {art}"
+            )));
+        }
+        let griffart = anfrage
+            .get(&format!("{IF_KANAL}.TargetHandleType"))
+            .and_then(|v| u32::try_from(v.clone()).ok())
+            .unwrap_or(GRIFF_KONTAKT);
+        if griffart != GRIFF_KONTAKT {
+            return Err(zbus::fdo::Error::NotSupported(format!(
+                "nur Kontaktgriffe, nicht Art {griffart}"
+            )));
+        }
+
         let griff = anfrage
             .get(&format!("{IF_KANAL}.TargetHandle"))
             .and_then(|v| u32::try_from(v.clone()).ok())
@@ -199,9 +271,21 @@ impl Anfragen {
 
         let mut z = self.z.lock().await;
         let griff = if griff != 0 {
+            // Ein Griff, den wir nicht kennen, gehoert zu einem alten Lauf
+            // der Nachrichten-App. Frueher wurde daraus ein Kanal mit
+            // leerer Kennung, und der Dienst bekam die leere Zeichenkette
+            // als Empfaenger.
+            if z.kennungen.kennung(griff).is_none() {
+                return Err(zbus::fdo::Error::InvalidArgs(format!(
+                    "unbekannter Griff {griff}"
+                )));
+            }
             griff
         } else if !kennung.is_empty() {
-            let g = z.kennungen.griff(&kennung);
+            let (g, ueber_namen) = z.kennungen.aufloesen(&kennung);
+            if ueber_namen {
+                eprintln!("Kanal ueber Anzeigenamen gefunden: {kennung:?} -> {g}");
+            }
             let p = z.protokoll.clone();
             z.kennungen.sichern(&p);
             g
@@ -209,11 +293,13 @@ impl Anfragen {
             return Err(zbus::fdo::Error::InvalidArgs("weder Griff noch Kennung".into()));
         };
         let gab_es = z.kanaele.contains_key(&griff);
-        let pfad = match z.kanaele.get(&griff) {
+        let pfad = match z.kanaele.get(&griff).or_else(|| z.vorgemerkt.get(&griff)) {
             Some(p) => p.clone(),
             None => {
                 z.naechster_kanal += 1;
-                format!("{}/TextChannel{}", z.pfad, z.naechster_kanal)
+                let p = format!("{}/TextChannel{}", z.pfad, z.naechster_kanal);
+                z.vorgemerkt.insert(griff, p.clone());
+                p
             }
         };
         let eigenschaften = crate::kanal_eigenschaften(&z, griff, &pfad);
@@ -281,7 +367,7 @@ impl Anfragen {
     }
 }
 
-/// Anwesenheit -- hier nur so weit, wie die Kontoverwaltung sie braucht.
+/// Anwesenheit – hier nur so weit, wie die Kontoverwaltung sie braucht.
 #[derive(Clone)]
 pub struct Anwesenheit {
     pub z: GeteilterZustand,
@@ -354,8 +440,17 @@ impl Kontakte {
         for g in griffe {
             let mut m: HashMap<String, zbus::zvariant::OwnedValue> = HashMap::new();
             let name = z.kennungen.name(g);
+            let kennung = z
+                .kennungen
+                .kennung(g)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| name.clone());
             m.insert(
                 format!("{}/contact-id", crate::IF_VERBINDUNG),
+                zbus::zvariant::Value::from(kennung).try_into().unwrap(),
+            );
+            m.insert(
+                format!("{IF_ALIASING}/alias"),
                 zbus::zvariant::Value::from(name.clone()).try_into().unwrap(),
             );
             m.insert(
@@ -371,8 +466,44 @@ impl Kontakte {
 
     #[zbus(property, name = "ContactAttributeInterfaces")]
     async fn contact_attribute_interfaces(&self) -> Vec<String> {
-        vec![IF_PRESENCE.to_string()]
+        vec![IF_PRESENCE.to_string(), IF_ALIASING.to_string()]
     }
+}
+
+/// Die Anzeigenamen.
+///
+/// Seit InspectHandles die Kennung liefert, ist das der einzige Weg, auf
+/// dem die Nachrichten-App noch "Fabian Mistelberger" statt einer UUID
+/// erfaehrt. Schreiben laesst sich nichts: die Namen kommen vom Dienst.
+#[derive(Clone)]
+pub struct Namen {
+    pub z: GeteilterZustand,
+}
+
+#[zbus::interface(name = "org.freedesktop.Telepathy.Connection.Interface.Aliasing")]
+impl Namen {
+    async fn get_alias_flags(&self) -> u32 {
+        0
+    }
+
+    async fn get_aliases(&self, griffe: Vec<u32>) -> HashMap<u32, String> {
+        let z = self.z.lock().await;
+        griffe.iter().map(|g| (*g, z.kennungen.name(*g))).collect()
+    }
+
+    async fn request_aliases(&self, griffe: Vec<u32>) -> Vec<String> {
+        let z = self.z.lock().await;
+        griffe.iter().map(|g| z.kennungen.name(*g)).collect()
+    }
+
+    /// Fremde Namen aendern wir nicht.
+    async fn set_aliases(&self, _namen: HashMap<u32, String>) {}
+
+    #[zbus(signal)]
+    pub async fn aliases_changed(
+        emitter: &zbus::object_server::SignalEmitter<'_>,
+        namen: Vec<(u32, String)>,
+    ) -> zbus::Result<()>;
 }
 
 pub const _S: (u32, u32, u32) = (STATUS_VERBUNDEN, STATUS_VERBINDET, STATUS_GETRENNT);

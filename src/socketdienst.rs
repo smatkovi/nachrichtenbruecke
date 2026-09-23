@@ -70,7 +70,7 @@ pub struct SocketDienst {
 impl SocketDienst {
     /// Startet den Daemon, wenn noetig, und verbindet sich.
     ///
-    /// Der Daemon wird nur gestartet, wenn der Socket nicht antwortet --
+    /// Der Daemon wird nur gestartet, wenn der Socket nicht antwortet –
     /// ein zweiter neben einem laufenden brachte bei WhatsApp schon
     /// einmal den Nachrichtenspeicher durcheinander.
     pub async fn verbinden(
@@ -343,7 +343,7 @@ mod proben {
     }
 
     /// Der Python-Daemon kennt die beiden Felder nicht. Ohne sie muss
-    /// alles durchkommen -- sonst waere der Rueckfallweg stumm.
+    /// alles durchkommen – sonst waere der Rueckfallweg stumm.
     #[test]
     fn ohne_die_felder_bleibt_es_beim_alten() {
         let v = ereignis(json!({

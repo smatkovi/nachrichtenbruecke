@@ -56,6 +56,8 @@ pub const IF_PRESENCE: &str =
     "org.freedesktop.Telepathy.Connection.Interface.SimplePresence";
 pub const IF_CONTACTS: &str =
     "org.freedesktop.Telepathy.Connection.Interface.Contacts";
+pub const IF_ALIASING: &str =
+    "org.freedesktop.Telepathy.Connection.Interface.Aliasing";
 
 pub const GRIFF_KONTAKT: u32 = 1;
 
@@ -68,7 +70,7 @@ pub const STATUS_GETRENNT: u32 = 2;
 /// Zwei Wege zum Hintergrund: WhatsApp und Signal sprechen HTTP mit
 /// unseren eigenen Diensten, Telegram und Matrix Zeilen-JSON ueber einen
 /// Unix-Socket mit den vorhandenen Python-Daemons. Letztere bleiben, wie
-/// sie sind -- sie zu ersetzen waere ein zweites Projekt.
+/// sie sind – sie zu ersetzen waere ein zweites Projekt.
 pub const PROTOKOLLE: [&str; 4] = ["whatsapp", "signal", "telegram", "matrix"];
 
 pub fn protokoll_bekannt(p: &str) -> bool {
@@ -94,7 +96,7 @@ impl Manager {
 
     /// Die Parameter, nach denen die Kontoverwaltung fragt.
     ///
-    /// (Name, Flags, Signatur, Vorgabe) -- Flag 4 heisst "erforderlich".
+    /// (Name, Flags, Signatur, Vorgabe) – Flag 4 heisst "erforderlich".
     async fn get_parameters(
         &self,
         protokoll: &str,
@@ -169,6 +171,9 @@ impl Manager {
             })
             .await;
         let _ = server
+            .at(pfad.clone(), verbindung::Namen { z: z.clone() })
+            .await;
+        let _ = server
             .at(pfad.clone(), verbindung::Kontakte { z: z.clone() })
             .await;
 
@@ -210,7 +215,7 @@ impl Manager {
 
 /// Die Eigenschaften eines Kanals, wie Telepathy sie erwartet.
 ///
-/// Sie stehen an mehreren Stellen gleich -- beim Anlegen, beim Melden und
+/// Sie stehen an mehreren Stellen gleich – beim Anlegen, beim Melden und
 /// in der Channels-Eigenschaft. Einmal geschrieben statt dreimal.
 pub fn kanal_eigenschaften(
     z: &verbindung::Zustand,
@@ -218,7 +223,14 @@ pub fn kanal_eigenschaften(
     _pfad: &str,
 ) -> HashMap<String, zbus::zvariant::OwnedValue> {
     use zbus::zvariant::Value;
-    let kennung = z.kennungen.name(griff);
+    // Die KENNUNG, nicht der Anzeigename: die Nachrichten-App reicht
+    // TargetID beim Antworten wieder herein, und ein Name waere dort
+    // keine Adresse. Den Namen holt sie sich ueber Aliasing.
+    let kennung = z
+        .kennungen
+        .kennung(griff)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| z.kennungen.name(griff));
     let mut m: HashMap<String, zbus::zvariant::OwnedValue> = HashMap::new();
     m.insert(format!("{IF_KANAL}.ChannelType"),
              Value::from(IF_TEXT).try_into().unwrap());
@@ -234,8 +246,10 @@ pub fn kanal_eigenschaften(
              Value::from(griff).try_into().unwrap());
     m.insert(format!("{IF_KANAL}.InitiatorID"),
              Value::from(kennung).try_into().unwrap());
+    // Text ist die ART des Kanals, keine zusaetzliche Schnittstelle --
+    // sie hier noch einmal zu nennen war falsch.
     m.insert(format!("{IF_KANAL}.Interfaces"),
-             Value::from(vec![IF_TEXT.to_string()]).try_into().unwrap());
+             Value::from(Vec::<String>::new()).try_into().unwrap());
     m
 }
 
@@ -259,4 +273,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = verbindung;
     std::future::pending::<()>().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// Kein Doppelbindestrich in einem Doc-Kommentar.
+    ///
+    /// zbus schreibt Doc-Kommentare als XML-Kommentare in die
+    /// Introspektionsdaten, und dort ist "\-\-" verboten. Ein einziger
+    /// Gedankenstrich in einem Doc-Kommentar macht das XML unlesbar;
+    /// commhistory-daemon scheitert dann an becomeReady und antwortet auf
+    /// ObserveChannels mit InvalidArgument ohne Text. Genau so ist der
+    /// Verlauf der Nachrichten-App monatelang leer geblieben.
+    #[test]
+    fn doc_kommentare_ohne_doppelbindestrich() {
+        let quellen = [
+            include_str!("main.rs"),
+            include_str!("verbindung.rs"),
+            include_str!("kanal.rs"),
+            include_str!("lauf.rs"),
+            include_str!("kennungen.rs"),
+            include_str!("hintergrund.rs"),
+            include_str!("socketdienst.rs"),
+            include_str!("dienst.rs"),
+        ];
+        let mut schlimm = Vec::new();
+        for (i, quelle) in quellen.iter().enumerate() {
+            for (n, zeile) in quelle.lines().enumerate() {
+                let z = zeile.trim_start();
+                // Der Test enthaelt das Muster selbst; die eigene Zeile
+                // ist maskiert und faellt darum nicht auf.
+                if z.starts_with("///") && z.contains("--") {
+                    schlimm.push(format!("Quelle {i}, Zeile {}: {z}", n + 1));
+                }
+            }
+        }
+        assert!(schlimm.is_empty(), "Doppelbindestrich im Doc-Kommentar:\n{}", schlimm.join("\n"));
+    }
 }

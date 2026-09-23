@@ -10,6 +10,12 @@
 //! Namen aendert, bekommt einen neuen Griff und damit einen neuen
 //! Gespraechsfaden. Hier ist die Chat-Kennung der Schluessel, und der
 //! Name nur eine Beschriftung.
+//!
+//! Wer von aussen nach einem Griff fragt, nennt aber nicht immer die
+//! Kennung: die Nachrichten-App hat frueher den Anzeigenamen
+//! zurueckbekommen und fragt spaeter mit genau dem wieder an. `aufloesen`
+//! faengt das ab, statt einen zweiten Griff auf einen Namen anzulegen --
+//! aus dem dann eine Sendung an "Fabian Mistelberger" wuerde.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -69,6 +75,32 @@ impl Kennungen {
             if std::fs::write(&tmp, t).is_ok() {
                 let _ = std::fs::rename(&tmp, &pfad);
             }
+        }
+    }
+
+    /// Der Griff zu einer Kennung ODER einem Anzeigenamen.
+    ///
+    /// Erst die Kennung, dann der Name, und nur wenn beides nichts
+    /// findet ein neuer Griff. Ist der Name mehrdeutig, wird er nicht
+    /// benutzt – zwei Leute gleichen Namens duerfen nicht denselben
+    /// Gespraechsfaden bekommen.
+    pub fn aufloesen(&mut self, text: &str) -> (u32, bool) {
+        if let Some(g) = self.zu_griff.get(text) {
+            return (*g, false);
+        }
+        let mut treffer = None;
+        for (g, n) in &self.namen {
+            if n == text {
+                if treffer.is_some() {
+                    treffer = None;
+                    break;
+                }
+                treffer = Some(*g);
+            }
+        }
+        match treffer {
+            Some(g) => (g, true),
+            None => (self.griff(text), false),
         }
     }
 

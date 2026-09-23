@@ -72,7 +72,7 @@ impl Hintergrund {
     /// Eine leere Antwort wird NICHT als Ergebnis hingenommen. pybridge
     /// fragt genau einmal beim Verbinden, und wenn der Dienst dabei
     /// gerade hochfaehrt und nichts weiss, bleibt die Namenstabelle die
-    /// ganze Sitzung leer -- in der Nachrichten-App stehen dann rohe
+    /// ganze Sitzung leer – in der Nachrichten-App stehen dann rohe
     /// Nummern statt Namen. Hier wird gewartet.
     pub async fn chats(&self) -> HashMap<String, String> {
         for versuch in 0..12 {
@@ -131,7 +131,7 @@ impl Hintergrund {
     ///
     /// Telepathy verlangt fuer eine verbundene Verbindung einen gueltigen
     /// eigenen Griff. Bleibt er null, gilt sie dem Kontoverwalter als
-    /// nicht verbunden -- die Verbindung antwortet dann zwar auf alles,
+    /// nicht verbunden – die Verbindung antwortet dann zwar auf alles,
     /// steht in der Oberflaeche aber auf "offline".
     pub async fn eigene_kennung(&self) -> String {
         match self {

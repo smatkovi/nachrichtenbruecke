@@ -135,14 +135,32 @@ impl Lauf {
     }
 
     async fn namen_uebernehmen(&self, namen: &HashMap<String, String>) {
-        let mut z = self.z.lock().await;
-        for (kennung, name) in namen {
-            let g = z.kennungen.griff(kennung);
-            z.kennungen.name_setzen(g, name);
-            z.chats.insert(kennung.clone(), name.clone());
+        let (pfad, geaendert) = {
+            let mut z = self.z.lock().await;
+            let mut geaendert: Vec<(u32, String)> = Vec::new();
+            for (kennung, name) in namen {
+                let g = z.kennungen.griff(kennung);
+                if z.kennungen.name(g) != *name {
+                    geaendert.push((g, name.clone()));
+                }
+                z.kennungen.name_setzen(g, name);
+                z.chats.insert(kennung.clone(), name.clone());
+            }
+            let p = z.protokoll.clone();
+            z.kennungen.sichern(&p);
+            (z.pfad.clone(), geaendert)
+        };
+
+        // Seit InspectHandles die Kennung liefert, ist dies der Weg, auf
+        // dem die Nachrichten-App den Namen erfaehrt.
+        if geaendert.is_empty() {
+            return;
         }
-        let p = z.protokoll.clone();
-        z.kennungen.sichern(&p);
+        if let Ok(pfad) = zbus::zvariant::ObjectPath::try_from(pfad) {
+            if let Ok(emitter) = SignalEmitter::new(&self.bus, pfad) {
+                let _ = crate::verbindung::Namen::aliases_changed(&emitter, geaendert).await;
+            }
+        }
     }
 
     /// Legt einen Kanal an, falls er fehlt, und meldet ihn.
@@ -152,10 +170,24 @@ impl Lauf {
         }
         let (pfad, kennung) = {
             let mut z = self.z.lock().await;
-            z.naechster_kanal += 1;
-            let pfad = format!("{}/TextChannel{}", z.pfad, z.naechster_kanal);
+            let pfad = match z.vorgemerkt.remove(&griff) {
+                // Jemand hat den Pfad schon bekommen; ein zweiter waere
+                // eine Adresse, unter der nie etwas erscheint.
+                Some(p) => p,
+                None => {
+                    z.naechster_kanal += 1;
+                    format!("{}/TextChannel{}", z.pfad, z.naechster_kanal)
+                }
+            };
             z.kanaele.insert(griff, pfad.clone());
-            (pfad, z.kennungen.name(griff))
+            // Die KENNUNG, nicht der Anzeigename: Text.Send nimmt genau
+            // dieses Feld als Empfaengeradresse, und ein Name ist keine.
+            let kennung = z
+                .kennungen
+                .kennung(griff)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| z.kennungen.name(griff));
+            (pfad, kennung)
         };
 
         let kz = Arc::new(Mutex::new(KanalZustand {
@@ -287,7 +319,7 @@ impl Lauf {
     /// Nachrichten-App.
     ///
     /// pybridge startet dafuer einen eigenen Python-Prozess. Hier sind es
-    /// zwei D-Bus-Aufrufe im selben Prozess -- das war der Grund, warum
+    /// zwei D-Bus-Aufrufe im selben Prozess – das war der Grund, warum
     /// beim Nachholen vieler Nachrichten die Last auf ueber sieben stieg.
     async fn an_commhistory(&self, griff: u32, nur_beobachten: bool) {
         let (pfad, eigenschaften, verbindungspfad) = {

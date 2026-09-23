@@ -17,7 +17,7 @@ pub struct KanalZustand {
     pub ausstehend: Vec<Ausstehend>,
     pub naechste_nummer: u32,
     pub geschlossen: bool,
-    /// Wann zuletzt an CommHistory gemeldet -- siehe Verbindung.
+    /// Wann zuletzt an CommHistory gemeldet – siehe Verbindung.
     pub zuletzt_gemeldet: std::time::Instant,
 }
 
@@ -48,8 +48,9 @@ impl Kanal {
         (z.griffart, z.griff)
     }
 
+    /// Text ist die Art des Kanals, keine zusaetzliche Schnittstelle.
     async fn get_interfaces(&self) -> Vec<String> {
-        vec![IF_TEXT.to_string()]
+        Vec::new()
     }
 
     #[zbus(property, name = "ChannelType")]
@@ -93,7 +94,7 @@ impl Kanal {
     }
 }
 
-/// Der Textteil desselben Kanals -- dieselbe Adresse, andere Schnittstelle.
+/// Der Textteil desselben Kanals – dieselbe Adresse, andere Schnittstelle.
 #[derive(Clone)]
 pub struct Text {
     pub z: Arc<Mutex<KanalZustand>>,
@@ -108,6 +109,21 @@ impl Text {
         // dauern, und solange stuende der ganze D-Bus still. Bei pybridge
         // war genau das der Grund fuer einen eigenen Faden je Sendung.
         let _ = self.senden.send((kennung, text.to_string()));
+    }
+
+    /// Welche Arten von Nachrichten dieser Kanal traegt.
+    ///
+    /// Ohne diese Methode wird ein Textkanal in telepathy-qt nie fertig:
+    /// GetMessageTypes gehoert zu den Aufrufen, die becomeReady macht.
+    /// Scheitert einer davon, meldet commhistory-daemon auf
+    /// ObserveChannels InvalidArgument ohne weiteren Text, und der
+    /// Verlauf der Nachrichten-App bleibt leer.
+    ///
+    /// 0 ist Channel_Text_Message_Type_Normal. Mehr kennt die Bruecke
+    /// nicht: Aktionen und Hinweise reicht sie als gewoehnlichen Text
+    /// durch.
+    async fn get_message_types(&self) -> Vec<u32> {
+        vec![0]
     }
 
     async fn list_pending_messages(&self, loeschen: bool) -> Vec<Ausstehend> {
