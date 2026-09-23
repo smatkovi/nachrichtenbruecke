@@ -98,17 +98,20 @@ impl Kanal {
 #[derive(Clone)]
 pub struct Text {
     pub z: Arc<Mutex<KanalZustand>>,
-    pub senden: tokio::sync::mpsc::UnboundedSender<(String, String)>,
+    pub senden: tokio::sync::mpsc::UnboundedSender<(u32, String, String)>,
 }
 
 #[zbus::interface(name = "org.freedesktop.Telepathy.Channel.Type.Text")]
 impl Text {
     async fn send(&self, _art: u32, text: &str) {
-        let kennung = self.z.lock().await.kennung.clone();
+        let (griff, kennung) = {
+            let z = self.z.lock().await;
+            (z.griff, z.kennung.clone())
+        };
         // Nicht hier auf den Dienst warten: das Senden kann Sekunden
         // dauern, und solange stuende der ganze D-Bus still. Bei pybridge
         // war genau das der Grund fuer einen eigenen Faden je Sendung.
-        let _ = self.senden.send((kennung, text.to_string()));
+        let _ = self.senden.send((griff, kennung, text.to_string()));
     }
 
     /// Welche Arten von Nachrichten dieser Kanal traegt.

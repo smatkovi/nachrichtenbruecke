@@ -66,7 +66,9 @@ pub type GeteilterZustand = Arc<Mutex<Zustand>>;
 pub enum Auftrag {
     Verbinden,
     Trennen,
-    Senden { an: String, text: String },
+    /// Der Griff kommt mit, damit die Nachricht nach dem Absenden auf
+    /// ihrem eigenen Kanal gemeldet werden kann.
+    Senden { griff: u32, an: String, text: String },
 }
 
 #[derive(Clone)]

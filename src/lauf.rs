@@ -82,10 +82,11 @@ impl Lauf {
                             // Der Draht bleibt, siehe Verbindung::disconnect.
                             self.status_melden(STATUS_GETRENNT).await;
                         }
-                        Some(Auftrag::Senden { an, text }) => {
+                        Some(Auftrag::Senden { griff, an, text }) => {
                             if let Some(h) = &hintergrund {
-                                if let Err(e) = h.senden(&an, &text).await {
-                                    eprintln!("{protokoll}: Senden: {e}");
+                                match h.senden(&an, &text).await {
+                                    Ok(()) => self.gesendet_melden(griff, &text).await,
+                                    Err(e) => eprintln!("{protokoll}: Senden: {e}"),
                                 }
                             }
                         }
@@ -237,15 +238,34 @@ impl Lauf {
     }
 
     /// Ein Sender, der Sendewuensche aus einem Kanal in die Schleife traegt.
-    fn senden_kanal(&self) -> mpsc::UnboundedSender<(String, String)> {
+    fn senden_kanal(&self) -> mpsc::UnboundedSender<(u32, String, String)> {
         let an = self.senden_an.clone();
-        let (s, mut r) = mpsc::unbounded_channel::<(String, String)>();
+        let (s, mut r) = mpsc::unbounded_channel::<(u32, String, String)>();
         tokio::spawn(async move {
-            while let Some((ziel, text)) = r.recv().await {
-                let _ = an.send(Auftrag::Senden { an: ziel, text });
+            while let Some((griff, ziel, text)) = r.recv().await {
+                let _ = an.send(Auftrag::Senden { griff, an: ziel, text });
             }
         });
         s
+    }
+
+    /// Meldet die eigene Nachricht auf ihrem Kanal.
+    ///
+    /// Ohne dieses Signal verschwindet sie beim Absenden: die
+    /// Nachrichten-App zeigt nur, was ihr der Kanal meldet, und fuer
+    /// Eingehendes tat er das immer, fuer Eigenes nie. Erst Sent macht
+    /// aus dem Absenden einen Eintrag im Gespraechsfaden.
+    async fn gesendet_melden(&self, griff: u32, text: &str) {
+        let Some(pfad) = self.z.lock().await.kanaele.get(&griff).cloned() else {
+            return;
+        };
+        let zeit = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0) as u32;
+        if let Ok(emitter) = SignalEmitter::new(&self.bus, pfad) {
+            let _ = Text::sent(&emitter, zeit, 0, text).await;
+        }
     }
 
     async fn zustellen(&mut self, n: crate::hintergrund::NeueNachricht, namen: &mut HashMap<String, String>) {
