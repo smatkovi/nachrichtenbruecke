@@ -208,6 +208,7 @@ impl Lauf {
             griff,
             griffart: GRIFF_KONTAKT,
             kennung,
+            schild: String::new(),
             ausstehend: Vec::new(),
             naechste_nummer: 0,
             geschlossen: false,
@@ -229,7 +230,10 @@ impl Lauf {
                 vorhanden
             }
         };
-        let kennung_fuer_oeffner = kz.lock().await.kennung.clone();
+        // Die Nachrichten-App kennt den Chat unter seinem Schild, nicht
+        // unter der Kennung -- startConversation will genau das.
+        let schild = self.z.lock().await.kennungen.schild(griff);
+        kz.lock().await.schild = schild.clone();
 
         let server = self.bus.object_server();
         let _ = server.at(pfad.clone(), Kanal { z: kz.clone() }).await;
@@ -249,7 +253,7 @@ impl Lauf {
                 crate::kanal::Oeffner {
                     bus: self.bus.clone(),
                     kontopfad,
-                    kennung: kennung_fuer_oeffner,
+                    schild,
                 },
             )
             .await;

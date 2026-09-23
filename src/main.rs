@@ -234,14 +234,11 @@ pub fn kanal_eigenschaften(
     _pfad: &str,
 ) -> HashMap<String, zbus::zvariant::OwnedValue> {
     use zbus::zvariant::Value;
-    // Die KENNUNG, nicht der Anzeigename: die Nachrichten-App reicht
-    // TargetID beim Antworten wieder herein, und ein Name waere dort
-    // keine Adresse. Den Namen holt sie sich ueber Aliasing.
-    let kennung = z
-        .kennungen
-        .kennung(griff)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| z.kennungen.name(griff));
+    // Das Schild, nicht die Kennung: die Nachrichten-App zeigt TargetID
+    // als Namen des Gespraechs an. Zum Adressieren taugt es trotzdem --
+    // aufloesen() findet den Griff dazu zurueck, und der Kanal kennt
+    // seine echte Kennung selbst.
+    let kennung = z.kennungen.schild(griff);
     let mut m: HashMap<String, zbus::zvariant::OwnedValue> = HashMap::new();
     m.insert(format!("{IF_KANAL}.ChannelType"),
              Value::from(IF_TEXT).try_into().unwrap());

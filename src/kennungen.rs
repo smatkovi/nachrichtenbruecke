@@ -33,6 +33,29 @@ pub struct Kennungen {
     /// Griff -> Anzeigename, nur zur Anzeige.
     #[serde(default)]
     namen: HashMap<u32, String>,
+    /// Griff -> Schild, das nach aussen geht.
+    ///
+    /// Die Nachrichten-App zeigt als Namen woertlich das, was
+    /// InspectHandles liefert: nco:imID, und weder sie noch
+    /// commhistory-daemon noch libcommhistory kennen die
+    /// Aliasing-Schnittstelle – in keinem der drei Binaries kommt sie
+    /// auch nur vor. Ein Gespraech traegt damit genau den Namen seiner
+    /// Kennung. Gibt man die echte Kennung heraus, heisst der Chat
+    /// "c:a80d4c3d-..." statt "Fabian Mistelberger".
+    ///
+    /// Also geht das Schild nach aussen und die Kennung bleibt innen. Das
+    /// war schon pybridges Weg – nur hing dort auch das SENDEN daran,
+    /// und deshalb ging eine Antwort an einen Namen statt an eine
+    /// Adresse. Hier kennt der Kanal seine Kennung selbst; das Schild ist
+    /// nur eine Beschriftung, die wir zurueckuebersetzen koennen.
+    #[serde(default)]
+    schilder: HashMap<u32, String>,
+    /// Jedes je vergebene Schild -> Griff.
+    ///
+    /// Auch die alten: wer sich umbenennt, behaelt damit seinen
+    /// Gespraechsfaden, statt einen neuen zu bekommen.
+    #[serde(default)]
+    schild_zu_griff: HashMap<String, u32>,
     /// "<art>:<name>" -> Griff, fuer alles, was kein Kontakt ist.
     ///
     /// Der Kontoverwalter fragt mit Griffart 3 nach den Kontaktlisten
@@ -100,6 +123,11 @@ impl Kennungen {
         if let Some(g) = self.zu_griff.get(text) {
             return (*g, false);
         }
+        // Ein Schild, auch ein altes: so findet eine Antwort ihren Weg,
+        // nachdem sich jemand umbenannt hat.
+        if let Some(g) = self.schild_zu_griff.get(text) {
+            return (*g, true);
+        }
         let mut treffer = None;
         for (g, n) in &self.namen {
             if n == text {
@@ -151,9 +179,37 @@ impl Kennungen {
     }
 
     pub fn name_setzen(&mut self, griff: u32, name: &str) {
-        if !name.is_empty() {
-            self.namen.insert(griff, name.to_string());
+        if name.is_empty() {
+            return;
         }
+        self.namen.insert(griff, name.to_string());
+
+        // Das Schild muss eindeutig sein, sonst faenden zwei Leute
+        // gleichen Namens in denselben Gespraechsfaden -- genau die Falle,
+        // an der pybridge haengt. Der zweite bekommt eine Ziffer.
+        if self.schilder.get(&griff).map(|s| s.as_str()) == Some(name) {
+            return;
+        }
+        let mut schild = name.to_string();
+        let mut n = 2;
+        while let Some(anderer) = self.schild_zu_griff.get(&schild) {
+            if *anderer == griff {
+                break;
+            }
+            schild = format!("{name} ({n})");
+            n += 1;
+        }
+        self.schild_zu_griff.insert(schild.clone(), griff);
+        self.schilder.insert(griff, schild);
+    }
+
+    /// Das Schild eines Griffs; ohne Schild die Kennung selbst.
+    pub fn schild(&self, griff: u32) -> String {
+        self.schilder
+            .get(&griff)
+            .cloned()
+            .or_else(|| self.zu_kennung.get(&griff).cloned())
+            .unwrap_or_default()
     }
 
     pub fn name(&self, griff: u32) -> String {

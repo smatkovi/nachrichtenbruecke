@@ -118,14 +118,19 @@ impl Verbindung {
         self.z.lock().await.selbst
     }
 
-    /// Die KENNUNG zu einem Griff, nicht der Anzeigename.
+    /// Das SCHILD zu einem Griff.
     ///
-    /// Das ist der Vertrag von Telepathy, und er hat einen Grund: was
-    /// hier herauskommt, kommt spaeter in RequestHandles und als
-    /// TargetID wieder herein. Gab man den Anzeigenamen zurueck, legte
-    /// die Nachrichten-App beim Antworten einen Griff auf "Fabian
-    /// Mistelberger" an, und der Dienst bekam einen Namen als
-    /// Empfaengeradresse. Der Name gehoert in Aliasing, nicht hierher.
+    /// Telepathy sieht hier die Kennung vor, und aus gutem Grund: was
+    /// herauskommt, kommt spaeter in RequestHandles und als TargetID
+    /// wieder herein. Die Nachrichten-App zeigt es aber auch als Namen an
+    /// – sie kennt keine Aliasing-Schnittstelle, und commhistory-daemon
+    /// und libcommhistory ebenso wenig. Eine echte Kennung hiesse also
+    /// ein Chat namens "c:a80d4c3d-...".
+    ///
+    /// Das Schild ist deshalb der Anzeigename, eindeutig gemacht. Sicher
+    /// ist das, weil nichts mehr davon abhaengt: der Kanal kennt seine
+    /// Kennung selbst, und aufloesen() findet zu jedem je vergebenen
+    /// Schild seinen Griff zurueck – auch zu einem alten.
     async fn inspect_handles(&self, art: u32, griffe: Vec<u32>) -> Vec<String> {
         let z = self.z.lock().await;
         griffe
@@ -138,10 +143,7 @@ impl Verbindung {
                         .unwrap_or_default()
                         .to_string();
                 }
-                z.kennungen
-                    .kennung(*g)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| z.kennungen.name(*g))
+                z.kennungen.schild(*g)
             })
             .collect()
     }
@@ -451,14 +453,9 @@ impl Kontakte {
         for g in griffe {
             let mut m: HashMap<String, zbus::zvariant::OwnedValue> = HashMap::new();
             let name = z.kennungen.name(g);
-            let kennung = z
-                .kennungen
-                .kennung(g)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| name.clone());
             m.insert(
                 format!("{}/contact-id", crate::IF_VERBINDUNG),
-                zbus::zvariant::Value::from(kennung).try_into().unwrap(),
+                zbus::zvariant::Value::from(z.kennungen.schild(g)).try_into().unwrap(),
             );
             m.insert(
                 format!("{IF_ALIASING}/alias"),

@@ -13,7 +13,10 @@ pub struct KanalZustand {
     pub pfad: String,
     pub griff: u32,
     pub griffart: u32,
+    /// Die echte Kennung – damit wird gesendet.
     pub kennung: String,
+    /// Das Schild – damit wird angezeigt und adressiert.
+    pub schild: String,
     pub ausstehend: Vec<Ausstehend>,
     pub naechste_nummer: u32,
     pub geschlossen: bool,
@@ -68,9 +71,14 @@ impl Kanal {
         self.z.lock().await.griffart
     }
 
+    /// Das Schild, wie in den Kanaleigenschaften.
+    ///
+    /// Beides muss dasselbe sagen: die Nachrichten-App liest die
+    /// Eigenschaftsliste aus NewChannels, fragt aber auch das Objekt
+    /// selbst. Zwei verschiedene Antworten waeren zwei Gespraechsfaeden.
     #[zbus(property, name = "TargetID")]
     async fn target_id(&self) -> String {
-        self.z.lock().await.kennung.clone()
+        self.z.lock().await.schild.clone()
     }
 
     #[zbus(property, name = "Requested")]
@@ -193,7 +201,8 @@ pub const _IF: &str = IF_KANAL;
 pub struct Oeffner {
     pub bus: zbus::Connection,
     pub kontopfad: String,
-    pub kennung: String,
+    /// Das Schild: unter dem kennt die Nachrichten-App den Chat.
+    pub schild: String,
 }
 
 #[zbus::interface(name = "org.smatkovi.Bruecke.Meldung")]
@@ -201,7 +210,7 @@ impl Oeffner {
     async fn oeffnen(&self) {
         // Die Nachrichten-App kennt den Kontopfad und die Kennung; mehr
         // braucht sie nicht, um den richtigen Faden aufzuschlagen.
-        let args = (self.kontopfad.as_str(), self.kennung.as_str(), 1u32);
+        let args = (self.kontopfad.as_str(), self.schild.as_str(), 1u32);
         let ruf = self
             .bus
             .call_method(
