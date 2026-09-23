@@ -260,6 +260,22 @@ pub fn nachricht_aus_ereignis(protokoll: &str, v: &Value) -> Option<HashMap<Stri
     if daten.get("out").and_then(|x| x.as_bool()).unwrap_or(false) {
         return None;
     }
+    // Stummgeschaltet heisst: nicht in die Nachrichten-App. Der Chat
+    // steht weiterhin in der Telegram-Oberflaeche, nur die Meldung und
+    // der Eintrag im Gespraechsverlauf bleiben aus -- dasselbe, was ein
+    // Telegram auf jedem anderen Geraet tut.
+    //
+    // Erwaehnungen und Antworten an einen selbst kommen trotzdem durch;
+    // auch darin folgt das Telegram.
+    //
+    // Die Felder setzt Drahtpost. Fehlen sie -- beim Python-Daemon --,
+    // bleibt es beim alten Verhalten, statt stillschweigend alles zu
+    // verschlucken.
+    let stumm = daten.get("muted").and_then(|x| x.as_bool()).unwrap_or(false);
+    let erwaehnt = daten.get("mentioned").and_then(|x| x.as_bool()).unwrap_or(false);
+    if stumm && !erwaehnt {
+        return None;
+    }
     m.insert("chat".into(), wert_als_text(daten.get("chat_id")?));
     m.insert(
         "sender".into(),
@@ -288,4 +304,52 @@ pub fn nachricht_aus_ereignis(protokoll: &str, v: &Value) -> Option<HashMap<Stri
         daten.get("date").map(wert_als_text).unwrap_or_default(),
     );
     Some(m)
+}
+
+#[cfg(test)]
+mod proben {
+    use super::*;
+
+    fn ereignis(inhalt: Value) -> Value {
+        json!({"event": "new_message", "data": inhalt})
+    }
+
+    #[test]
+    fn stumme_gruppe_kommt_nicht_durch() {
+        let v = ereignis(json!({
+            "chat_id": -1001461414594i64, "sender_id": 1, "text": "hallo",
+            "date": 1.0, "out": false, "muted": true, "mentioned": false,
+        }));
+        assert!(nachricht_aus_ereignis("telegram", &v).is_none());
+    }
+
+    #[test]
+    fn erwaehnung_in_stummer_gruppe_kommt_durch() {
+        let v = ereignis(json!({
+            "chat_id": -1001461414594i64, "sender_id": 1, "text": "@smatkovi?",
+            "date": 1.0, "out": false, "muted": true, "mentioned": true,
+        }));
+        let m = nachricht_aus_ereignis("telegram", &v).expect("Erwaehnung muss durch");
+        assert_eq!(m.get("text").map(|s| s.as_str()), Some("@smatkovi?"));
+    }
+
+    #[test]
+    fn lautes_bleibt_laut() {
+        let v = ereignis(json!({
+            "chat_id": 93061901i64, "sender_id": 1, "text": "hallo",
+            "date": 1.0, "out": false, "muted": false, "mentioned": false,
+        }));
+        assert!(nachricht_aus_ereignis("telegram", &v).is_some());
+    }
+
+    /// Der Python-Daemon kennt die beiden Felder nicht. Ohne sie muss
+    /// alles durchkommen -- sonst waere der Rueckfallweg stumm.
+    #[test]
+    fn ohne_die_felder_bleibt_es_beim_alten() {
+        let v = ereignis(json!({
+            "chat_id": -1001461414594i64, "sender_id": 1, "text": "hallo",
+            "date": 1.0, "out": false,
+        }));
+        assert!(nachricht_aus_ereignis("telegram", &v).is_some());
+    }
 }
