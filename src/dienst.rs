@@ -121,7 +121,16 @@ impl Dienst {
                 .ok_or_else(|| "Antwort ohne Kopf".to_string())?;
             let erste = kopf.lines().next().unwrap_or("");
             if !erste.contains(" 200 ") {
-                return Err(format!("HTTP: {erste}"));
+                // Der Grund steht im Koerper, nicht in der Statuszeile. Ohne
+                // ihn stand im Protokoll nur "HTTP: HTTP/1.1 500 Internal
+                // Server Error", und warum eine Nachricht nicht hinausging,
+                // war daran nicht zu erkennen -- im Fall, der das ans Licht
+                // brachte, war das Backend gerade von WhatsApp getrennt.
+                let grund: String = koerper.trim().chars().take(200).collect();
+                if grund.is_empty() {
+                    return Err(format!("HTTP: {erste}"));
+                }
+                return Err(format!("HTTP: {erste} -- {grund}"));
             }
             // Stueckweise Uebertragung ist bei HTTP/1.1 nicht die
             // Ausnahme, sondern der Normalfall, wenn der Absender die
