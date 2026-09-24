@@ -39,6 +39,7 @@ mod dienst;
 mod hintergrund;
 mod kanal;
 mod kennungen;
+mod kontenwache;
 mod lauf;
 mod socketdienst;
 mod verbindung;
@@ -277,6 +278,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Standardausgabe: letztere ist bei einer Umleitung blockgepuffert,
     // und dann steht die entscheidende Zeile noch im Puffer, waehrend man
     // im Protokoll nach ihr sucht.
+    // Die Wache haelt die Konten oben, die oben sein sollen -- und nur
+    // die. Ein Konto, das jemand bewusst abgeschaltet hat, bleibt aus.
+    kontenwache::starten(verbindung.clone());
+
     eprintln!("🌉 {CM_BUS} bereit");
     let _ = verbindung;
     std::future::pending::<()>().await;
@@ -304,6 +309,7 @@ mod tests {
             include_str!("hintergrund.rs"),
             include_str!("socketdienst.rs"),
             include_str!("dienst.rs"),
+            include_str!("kontenwache.rs"),
         ];
         let mut schlimm = Vec::new();
         for (i, quelle) in quellen.iter().enumerate() {
