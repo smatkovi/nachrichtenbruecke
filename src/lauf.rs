@@ -41,6 +41,19 @@ impl Lauf {
                 auftrag = self.auftraege.recv() => {
                     match auftrag {
                         Some(Auftrag::Verbinden) => {
+                            // Ein Griff allein heisst noch nicht, dass
+                            // dahinter jemand ist: stirbt der Daemon,
+                            // bleibt er liegen. Wer ihn dann ungeprueft
+                            // als "verbunden" meldet, sperrt sich selbst
+                            // aus -- die Kontenwache sieht ein
+                            // verbundenes Konto und stoesst nichts mehr
+                            // an, und nur ein Neustart der Bruecke half.
+                            if let Some(h) = hintergrund.as_ref() {
+                                if !h.lebt().await {
+                                    eprintln!("{protokoll}: Griff ist tot -- verbinde neu");
+                                    hintergrund = None;
+                                }
+                            }
                             if hintergrund.is_some() {
                                 // Schon verbunden -- den Zustand noch
                                 // einmal melden. Mission Control fragt

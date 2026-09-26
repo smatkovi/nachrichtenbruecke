@@ -151,6 +151,22 @@ impl Hintergrund {
         }
     }
 
+    /// Antwortet der Hintergrund ueberhaupt noch?
+    ///
+    /// Stirbt der Daemon hinter dem Socket, bleibt der Griff darauf
+    /// bestehen: die Bruecke meldete dann bis zu ihrem eigenen Neustart
+    /// "verbunden", Telegram blieb still, und nirgends stand ein Fehler.
+    /// Genau eine billige Frage genuegt -- ist der Draht fort, scheitert
+    /// schon das Absenden.
+    pub async fn lebt(&self) -> bool {
+        match self {
+            Hintergrund::Http { dienst, .. } => dienst.eigene_nummer().await.is_some(),
+            Hintergrund::Socket { dienst, .. } => {
+                dienst.fragen("get_me", serde_json::Value::Null).await.is_ok()
+            }
+        }
+    }
+
     pub async fn senden(&self, an: &str, text: &str) -> Result<(), String> {
         match self {
             Hintergrund::Http { dienst, .. } => dienst.senden(an, text).await,
