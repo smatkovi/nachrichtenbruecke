@@ -36,12 +36,15 @@ dem **Anzeigenamen**. Zwei Kontakte gleichen Namens fallen dann zusammen,
 und wer seinen Namen ändert, bekommt einen neuen Gesprächsfaden. Hier ist
 die Chat-Kennung der Schlüssel, der Name nur eine Beschriftung.
 
-## Vier Protokolle, zwei Wege
+## Fünf Protokolle, zwei Wege
 
-WhatsApp und Signal sprechen HTTP mit den Diensten von
+WhatsApp, Signal und **Briar** sprechen HTTP mit den Diensten von
 [harbour-whatsapp-meego](https://github.com/smatkovi/harbour-whatsapp-meego)
 und [Fluesterwind](https://github.com/smatkovi/fluesterwind) — direkt,
-ohne Übersetzer dazwischen.
+ohne Übersetzer dazwischen. Briar kam zuletzt dazu (harbour-briar, Dienst
+`briard` auf Port 8105) und kostete hier drei Zeilen: sein Dienst beantwortet
+dieselben vier Wege. Eine Kennung ist dort `c<Kontakt>` oder `g<Gruppe>`.
+Einrichten auf dem Gerät: `tools/briar-einrichten.sh`.
 
 Telegram und Matrix hängen an den vorhandenen Python-Daemons
 (`pytelegram`, `pymatrix`) über einen Unix-Socket mit Zeilen-JSON. Die
@@ -89,6 +92,13 @@ braucht einen **gültigen eigenen Griff**. Bleibt `SelfHandle` null,
 antwortet sie zwar auf alles und meldet `GetStatus() == 0`, gilt dem
 Kontoverwalter aber trotzdem als nicht verbunden — in der Oberfläche
 steht dann „offline", ohne dass irgendwo ein Fehler auftaucht.
+
+Eine zweite, die eine Stunde kostete: der Griff auf den Daemon bleibt
+liegen, wenn der Daemon stirbt. Die Bruecke meldete das Konto dann bis
+zu ihrem eigenen Neustart als verbunden — die Kontenwache sieht ein
+verbundenes Konto und stoesst nichts mehr an, und im Protokoll steht
+nur `Zustand: 2 / Zustand: 0`. Deshalb prueft `Verbinden` den Griff mit
+`Hintergrund::lebt()`, bevor es ihn wiederverwendet.
 
 ## Bauen
 

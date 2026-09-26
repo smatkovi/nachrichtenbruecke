@@ -41,7 +41,7 @@ pub enum Hintergrund {
 impl Hintergrund {
     pub async fn oeffnen(protokoll: &str) -> Result<Self, String> {
         match protokoll {
-            "whatsapp" | "signal" => {
+            "whatsapp" | "signal" | "briar" => {
                 let mut d = Dienst::neu(protokoll).ok_or("unbekannt")?;
                 if !d.finden().await {
                     return Err(format!("{protokoll}: Dienst antwortet nicht"));

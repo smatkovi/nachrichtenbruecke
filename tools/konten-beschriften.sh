@@ -1,5 +1,5 @@
 #!/bin/sh
-# Setzt Dienst und Symbol der vier Bruecke-Konten.
+# Setzt Dienst und Symbol der Bruecke-Konten.
 #
 # Ohne diese beiden Eigenschaften zeigen die Kontoliste und die
 # Nachrichten-App bei einem Gespraech nicht an, ueber welchen Dienst es
@@ -18,7 +18,7 @@ setze() {
         string:$IF string:"$2" variant:string:"$3" >/dev/null
 }
 
-for P in whatsapp signal telegram matrix; do
+for P in whatsapp signal telegram matrix briar; do
     A=/org/freedesktop/Telepathy/Account/bruecke/$P/${P}0
     if dbus-send --session --print-reply --dest=$AM "$A" \
         org.freedesktop.DBus.Properties.Get string:$IF string:Valid >/dev/null 2>&1

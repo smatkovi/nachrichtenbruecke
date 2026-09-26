@@ -71,11 +71,16 @@ pub const STATUS_GETRENNT: u32 = 2;
 
 /// Die Protokolle, die dieser Manager traegt.
 ///
-/// Zwei Wege zum Hintergrund: WhatsApp und Signal sprechen HTTP mit
+/// Zwei Wege zum Hintergrund: WhatsApp, Signal und Briar sprechen HTTP mit
 /// unseren eigenen Diensten, Telegram und Matrix Zeilen-JSON ueber einen
 /// Unix-Socket mit den vorhandenen Python-Daemons. Letztere bleiben, wie
 /// sie sind – sie zu ersetzen waere ein zweites Projekt.
-pub const PROTOKOLLE: [&str; 4] = ["whatsapp", "signal", "telegram", "matrix"];
+///
+/// Briar kam zuletzt dazu und brauchte hier fast nichts: sein Dienst
+/// (harbour-briar, briard) beantwortet dieselben vier Wege wie die beiden
+/// anderen HTTP-Dienste -- /chats, /messages?jid=, /send?to=&text=,
+/// /events?since=. Eine Kennung ist dort c<Kontakt> oder g<Gruppe>.
+pub const PROTOKOLLE: [&str; 5] = ["whatsapp", "signal", "telegram", "matrix", "briar"];
 
 pub fn protokoll_bekannt(p: &str) -> bool {
     PROTOKOLLE.contains(&p)

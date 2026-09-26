@@ -64,6 +64,8 @@ impl Dienst {
         let ports: &'static [u16] = match protokoll {
             "whatsapp" => &[8085, 8086, 8087, 8088, 8089],
             "signal" => &[8095, 8096, 8097, 8098, 8099],
+            // briard hoert fest auf 8105; die App startet ihn selbst.
+            "briar" => &[8105],
             _ => return None,
         };
         Some(Dienst { protokoll: protokoll.to_string(), ports, port: 0 })

@@ -33,3 +33,11 @@ RequestableChannelClasses=org.freedesktop.Telepathy.Channel.Type.Text
 VCardField=x-matrix
 EnglishName=Matrix
 Icon=icon-m-service-matrix
+
+[Protocol briar]
+param-account=s required
+ConnectionInterfaces=org.freedesktop.Telepathy.Connection.Interface.Requests;org.freedesktop.Telepathy.Connection.Interface.SimplePresence;org.freedesktop.Telepathy.Connection.Interface.Contacts;
+RequestableChannelClasses=org.freedesktop.Telepathy.Channel.Type.Text
+VCardField=x-briar
+EnglishName=Briar
+Icon=icon-m-service-briar

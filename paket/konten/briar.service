@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Damit Briar in "Konten hinzufuegen" auftaucht. Aufbau wie bei den
+     anderen vier Bruecke-Diensten; der Manager ist hier von Anfang an
+     "bruecke", nicht mehr pybridge. -->
+<service id="briar">
+  <type>IM</type>
+  <provider>briar</provider>
+  <name>Briar</name>
+  <icon>icon-m-service-briar</icon>
+
+  <template>
+    <setting name="manager">bruecke</setting>
+    <setting name="protocol">briar</setting>
+
+    <group name="icons">
+      <setting name="icon-normal">icon-s-service-briar</setting>
+      <setting name="icon-m-normal">icon-m-service-briar</setting>
+      <setting name="icon-inverted">icon-s-service-briar</setting>
+    </group>
+  </template>
+
+  <type-data>
+    <service-presences-list>
+      <i18n-domain>rtcom-libpresence</i18n-domain>
+
+      <presence id="available" type="Available">
+        <presence-icon size="small">icon-s-common-presence-online</presence-icon>
+        <presence-icon size="medium">icon-m-common-presence-online</presence-icon>
+        <i18n-name>qtn_comm_presence_online</i18n-name>
+      </presence>
+
+      <presence id="offline" type="Offline">
+        <presence-icon size="small">icon-s-common-presence-offline</presence-icon>
+        <presence-icon size="medium">icon-m-common-presence-offline</presence-icon>
+        <i18n-name>qtn_comm_presence_offline</i18n-name>
+      </presence>
+    </service-presences-list>
+  </type-data>
+</service>
