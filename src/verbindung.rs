@@ -67,8 +67,13 @@ pub type GeteilterZustand = Arc<Mutex<Zustand>>;
 
 /// Was die Verbindung von aussen aufgetragen bekommt.
 pub enum Auftrag {
-    Verbinden,
-    Trennen,
+    /// Verbinden – sofern das Konto nicht abgeschaltet ist. `nochmal`
+    /// heisst: bei Zweifel gleich darauf noch einmal nachsehen.
+    Verbinden { nochmal: bool },
+    /// Die Kontoverwaltung trennt. Ob der Mensch das wollte, steht nicht
+    /// im Auftrag, sondern am Konto – siehe kontenwache::will_offline.
+    /// `nachfassen` heisst: bei Zweifel noch einmal nachsehen.
+    Trennen { nachfassen: bool },
     /// Der Griff kommt mit, damit die Nachricht nach dem Absenden auf
     /// ihrem eigenen Kanal gemeldet werden kann.
     Senden { griff: u32, an: String, text: String },
@@ -82,19 +87,32 @@ pub struct Verbindung {
 
 #[zbus::interface(name = "org.freedesktop.Telepathy.Connection")]
 impl Verbindung {
+    /// Verbinden heisst nicht unbedingt verbinden.
+    ///
+    /// Die Kontoverwaltung ruft das hier beim Hochkommen der Bruecke fuer
+    /// jedes Konto, das „automatisch verbindet" – und nimmt dafuer die
+    /// automatische Anwesenheit, nicht die gewuenschte. Ob der Mensch das
+    /// Konto abgeschaltet hat, steht am Konto; nachgesehen wird in der
+    /// Schleife.
     async fn connect(&self) {
-        let _ = self.auftraege.send(Auftrag::Verbinden);
+        eprintln!("Bruecke: Connect");
+        let _ = self.auftraege.send(Auftrag::Verbinden { nochmal: true });
     }
 
-    /// Trennen beendet nichts.
+    /// Trennen beendet nicht von sich aus.
     ///
     /// Mission Control trennt eine Verbindung bei jeder Gelegenheit –
     /// beim Bildschirmschlaf etwa. Die Verbindung zum Dienst dabei
     /// abzubauen hiesse, jede eingehende Nachricht zu verpassen, bis
-    /// jemand die App oeffnet. Der Zustand wird gemeldet, der Draht
-    /// bleibt.
+    /// jemand die App oeffnet.
+    ///
+    /// Stellt aber der Mensch das Konto in der Kontenuebersicht ab, soll
+    /// es abgeschaltet sein, und der Draht gehoert weg. Beides kommt hier
+    /// als derselbe Auftrag an; entschieden wird in der Schleife, an
+    /// RequestedPresence des Kontos – siehe kontenwache::will_offline.
     async fn disconnect(&self) {
-        let _ = self.auftraege.send(Auftrag::Trennen);
+        eprintln!("Bruecke: Disconnect");
+        let _ = self.auftraege.send(Auftrag::Trennen { nachfassen: true });
     }
 
     async fn get_status(&self) -> u32 {
@@ -391,11 +409,22 @@ pub struct Anwesenheit {
     name = "org.freedesktop.Telepathy.Connection.Interface.SimplePresence"
 )]
 impl Anwesenheit {
+    /// Derselbe Weg wie `Disconnect`, und aus demselben Grund.
+    ///
+    /// Ob die Kontoverwaltung beim Bildschirmschlaf `Disconnect` ruft oder
+    /// hier hereinkommt, ist nicht nachgemessen – der urspruengliche Stand
+    /// hat beide Wege gleich behandelt, also wusste es auch dort niemand.
+    /// Zu raten ist auch nicht noetig: hat ein Mensch das Konto
+    /// abgeschaltet, steht das am Konto, ganz gleich, welche Methode
+    /// gerufen wurde. Der Name des Wegs wird nur mitgeschrieben, damit die
+    /// Frage beim ersten echten Abschalten beantwortet ist.
     async fn set_presence(&self, status: &str, _meldung: &str) {
         if status == "offline" {
-            let _ = self.auftraege.send(Auftrag::Trennen);
+            eprintln!("Bruecke: SetPresence(offline)");
+            let _ = self.auftraege.send(Auftrag::Trennen { nachfassen: true });
         } else {
-            let _ = self.auftraege.send(Auftrag::Verbinden);
+            eprintln!("Bruecke: SetPresence({status})");
+            let _ = self.auftraege.send(Auftrag::Verbinden { nochmal: true });
         }
     }
 

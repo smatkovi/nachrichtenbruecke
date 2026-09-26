@@ -100,9 +100,56 @@ verbundenes Konto und stoesst nichts mehr an, und im Protokoll steht
 nur `Zustand: 2 / Zustand: 0`. Deshalb prueft `Verbinden` den Griff mit
 `Hintergrund::lebt()`, bevor es ihn wiederverwendet.
 
+Eine dritte, die einen Nachmittag kostete: **abschalten hielt nicht.** Ein
+Konto in der Kontenübersicht offline zu stellen wirkte, und beim nächsten
+Start der Brücke war es wieder oben. Zwei Ursachen, und beide muss man am
+Konto nachlesen statt am Aufruf.
+
+`Connection.Disconnect` kommt von Mission Control bei jeder Gelegenheit —
+beim Bildschirmschlaf etwa. Die Verbindung zum Daemon dabei abzubauen
+hieße, jede eingehende Nachricht zu verpassen, bis jemand die App öffnet;
+deshalb hielt die Brücke den Draht und meldete nur „getrennt". Nur: das
+Abschalten durch einen Menschen kommt als **derselbe** Aufruf an.
+Unterscheiden lässt sich das allein an `RequestedPresence` des Kontos —
+die Gelegenheitstrennung lässt sie auf 2 stehen, die Entscheidung setzt
+sie auf 1. Nachgemessen: Mission Control nimmt `Disconnect` (nicht
+`SetPresence`) und setzt die Eigenschaft **vorher**.
+
+Schwerer wog die zweite: Mission Control ruft `Connect()` beim Hochkommen
+der Brücke für jedes Konto, das „automatisch verbindet" — und nimmt dafür
+die **automatische** Anwesenheit, nicht die gewünschte. Am N9 standen
+darum alle fünf Konten gleichzeitig auf `Requested: offline (1)` und
+`Current: available (2)`. Ändern lässt sich der Kontoverwalter nicht
+(geschlossen, von aegis gehalten), also prüft die Brücke auch beim
+Verbinden und verweigert ein abgeschaltetes Konto. Das setzt sich nicht
+fest: Mission Control gibt nach zwei Runden auf.
+
+Beides geht durch `kontenwache::will_offline()`, und die meldet „offline"
+nur bei klarem Befund. Busfehler, unlesbarer Wert, kein Konto gefunden:
+dann bleibt der Draht. Ein zu Unrecht abgebauter kostet Nachrichten, ein
+zu Unrecht gehaltener nur Strom.
+
 ## Bauen
 
     . tools/cross.env
     tools/build.sh          # -> build/bruecke
 
 Was dabei nicht offensichtlich ist, steht in `tools/cross.env`.
+
+## Einspielen
+
+    N9_HOST=192.168.1.15 tools/einspielen.sh               # am Draht
+    N9_JUMP=arch N9_HOST=192.168.1.8 tools/einspielen.sh   # über einen Zwischenwirt
+
+Die Brücke kam nie aus einem Paket, also steht ihr Hash nicht in aegis'
+`refhashlist` und Kopieren ist harmlos — anders als bei allem, was dpkg
+gelegt hat.
+
+Zwei Fallen stecken in diesem Skript, beide bezahlt: `pkill -x bruecke`
+**trifft den Prozess nicht** (der 2.6.32-Kernel hat kein
+`/proc/<pid>/comm`), und wer vor dem Ersetzen abschießt, bekommt binnen
+einer Sekunde eine neue Brücke aus der **alten** Datei — die Datei ist
+dann neu, das laufende Programm nicht. Also erst ersetzen, dann über die
+`/proc/*/exe`-Verweise suchen und beenden; ein `(deleted)` dahinter
+verrät das alte Inode. Gestartet wird nichts von Hand: das Skript
+aktiviert den Busnamen, damit die Konten wieder verbinden.

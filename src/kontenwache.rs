@@ -104,6 +104,103 @@ pub fn eingreifen(gewuenscht: u32, tatsaechlich: u32) -> bool {
     gewuenscht == VERFUEGBAR && tatsaechlich == OFFLINE
 }
 
+/// Aus den gelesenen Wuenschen die Entscheidung.
+///
+/// Im Zweifel `false`: nichts gelesen, nichts verstanden, kein Konto
+/// gefunden – dann bleibt der Draht. Ein faelschlich abgebauter Draht
+/// kostet Nachrichten, ein faelschlich gehaltener nur etwas Strom.
+///
+/// Mehrere Werte sind der Normalfall am N9: dort kann dasselbe Konto
+/// doppelt stehen, einmal im rtcom-Keyfile und einmal in accounts.db.
+/// Dann zaehlt jedes – wer eines davon abschaltet, meint das Konto.
+pub fn offline_gewollt(wuensche: &[Option<u32>]) -> bool {
+    wuensche.iter().flatten().any(|&a| a == OFFLINE)
+}
+
+/// Das Protokollstueck aus einem Kontopfad: `…/Account/bruecke/<prot>/<konto>`.
+fn protokoll_im_pfad(pfad: &str) -> Option<&str> {
+    let rest = pfad.split(&format!("/{}/", crate::CM_NAME)).nth(1)?;
+    rest.split('/')
+        .next()
+        .filter(|s| !s.is_empty() && rest.contains('/'))
+}
+
+/// Will der Mensch dieses Konto offline haben?
+///
+/// Zwei sehr verschiedene Dinge erreichen die Bruecke als denselben
+/// Auftrag. Mission Control trennt bei jeder Gelegenheit – beim
+/// Bildschirmschlaf etwa –, und dann soll der Draht bleiben, sonst
+/// verpasst man jede eingehende Nachricht, bis jemand die App oeffnet.
+/// Stellt aber der Mensch das Konto in der Kontenuebersicht ab, ist das
+/// eine Entscheidung, und der Draht gehoert weg.
+///
+/// Am Auftrag ist beides nicht zu unterscheiden, an der Kontoeigenschaft
+/// schon: die Gelegenheitstrennung laesst `RequestedPresence` auf
+/// „verfuegbar" stehen, die Entscheidung setzt sie auf „offline". Das ist
+/// dieselbe Eigenschaft, auf die sich die Tabelle oben stuetzt.
+///
+/// Gelesen wird bei jedem Auftrag frisch ueber den Bus, nicht aus einem
+/// Zwischenspeicher: die Kontoverwaltung setzt die Eigenschaft, bevor sie
+/// trennt, und nur der Wert in diesem Augenblick sagt etwas.
+pub async fn will_offline(
+    sitzung: &zbus::Connection,
+    protokoll: &str,
+    anlass: &str,
+) -> bool {
+    let verwalter =
+        match zbus::Proxy::new(sitzung, AM, AM_PFAD, "org.freedesktop.DBus.Properties").await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!(
+                    "{protokoll}: {anlass}, Kontoverwaltung nicht erreichbar ({e})"
+                );
+                return false;
+            }
+        };
+    let konten: OwnedValue = match verwalter.call("Get", &(AM, "ValidAccounts")).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{protokoll}: {anlass}, Kontenliste nicht lesbar ({e})");
+            return false;
+        }
+    };
+    let pfade: Vec<zbus::zvariant::OwnedObjectPath> = match konten.try_into() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{protokoll}: {anlass}, Kontenliste unverstaendlich ({e})");
+            return false;
+        }
+    };
+
+    let mut wuensche: Vec<Option<u32>> = Vec::new();
+    let mut fremde: Vec<&str> = Vec::new();
+    for p in &pfade {
+        let pfad = p.as_str();
+        let Some(prot) = protokoll_im_pfad(pfad) else {
+            continue;
+        };
+        if prot != protokoll {
+            fremde.push(prot);
+            continue;
+        }
+        let wert = eigenschaft(sitzung, pfad, "RequestedPresence").await.ok();
+        let gewuenscht = wert.as_ref().and_then(art);
+        match gewuenscht {
+            Some(a) => eprintln!("{protokoll}: {anlass}, RequestedPresence={a} ({pfad})"),
+            None => {
+                eprintln!("{protokoll}: {anlass}, RequestedPresence nicht lesbar ({pfad})")
+            }
+        }
+        wuensche.push(gewuenscht);
+    }
+    if wuensche.is_empty() {
+        eprintln!(
+            "{protokoll}: {anlass}, kein eigenes Konto gefunden (gesehen: {fremde:?})"
+        );
+    }
+    offline_gewollt(&wuensche)
+}
+
 /// Die Praesenzart aus einer Eigenschaft (u, s, s) herausholen.
 fn art(wert: &OwnedValue) -> Option<u32> {
     let s = zbus::zvariant::Structure::try_from(wert.clone()).ok()?;
@@ -201,5 +298,44 @@ mod tests {
         // unbekannte Werte fuehren zu nichts
         assert!(!eingreifen(0, 0));
         assert!(!eingreifen(3, OFFLINE));
+    }
+
+    /// Im Zweifel bleibt der Draht.
+    ///
+    /// Die Frage geht ueber den Bus, und der kann schweigen. Wer dann
+    /// aufloest, verpasst Nachrichten, bis jemand die App oeffnet – das
+    /// ist genau der Schaden, gegen den die Bruecke den Griff haelt.
+    #[test]
+    fn ungelesenes_trennt_nicht() {
+        assert!(!offline_gewollt(&[]));
+        assert!(!offline_gewollt(&[None]));
+        assert!(!offline_gewollt(&[Some(VERFUEGBAR)]));
+        assert!(!offline_gewollt(&[None, Some(VERFUEGBAR)]));
+        // unbekannte Werte sind kein Abschalten
+        assert!(!offline_gewollt(&[Some(0), Some(7)]));
+        // und ein klares Abschalten ist eines
+        assert!(offline_gewollt(&[Some(OFFLINE)]));
+        assert!(offline_gewollt(&[None, Some(OFFLINE)]));
+        // Am N9 steht dasselbe Konto doppelt; eines abgeschaltet genuegt.
+        assert!(offline_gewollt(&[Some(VERFUEGBAR), Some(OFFLINE)]));
+    }
+
+    /// Nur das eigene Konto zaehlt, nicht das der anderen Bruecke.
+    #[test]
+    fn protokoll_aus_dem_pfad() {
+        let eigen = "/org/freedesktop/Telepathy/Account/bruecke/telegram/account0";
+        assert_eq!(protokoll_im_pfad(eigen), Some("telegram"));
+        assert_eq!(
+            protokoll_im_pfad("/org/freedesktop/Telepathy/Account/bruecke/matrix/account0"),
+            Some("matrix")
+        );
+        // fremde Kontoverwaltung: nichts fuer uns
+        assert_eq!(
+            protokoll_im_pfad("/org/freedesktop/Telepathy/Account/gabble/jabber/account0"),
+            None
+        );
+        // abgeschnittene Pfade ergeben kein Protokoll
+        assert_eq!(protokoll_im_pfad("/bruecke/"), None);
+        assert_eq!(protokoll_im_pfad("/bruecke/telegram"), None);
     }
 }

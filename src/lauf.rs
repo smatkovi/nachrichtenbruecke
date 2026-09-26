@@ -40,7 +40,49 @@ impl Lauf {
 
                 auftrag = self.auftraege.recv() => {
                     match auftrag {
-                        Some(Auftrag::Verbinden) => {
+                        Some(Auftrag::Verbinden { nochmal }) => {
+                            // Nicht verbinden, was abgeschaltet ist.
+                            //
+                            // Die Kontoverwaltung ruft Connect() beim
+                            // Hochkommen der Bruecke fuer jedes Konto,
+                            // das „automatisch verbindet", und nimmt
+                            // dafuer die automatische Anwesenheit statt
+                            // der gewuenschten. Am 26.09.2026 standen am
+                            // N9 deshalb alle fuenf Konten auf „offline
+                            // gewuenscht" und gleichzeitig auf
+                            // „verbunden" – abschalten half nur bis zum
+                            // naechsten Start der Bruecke. Die
+                            // Kontoverwaltung laesst sich nicht aendern
+                            // (geschlossen, von aegis gehalten), also
+                            // haelt die Bruecke die Entscheidung.
+                            //
+                            // Im Zweifel wird verbunden: will_offline
+                            // meldet nur bei klarem Befund „offline",
+                            // und ein zu Unrecht verweigerter Draht
+                            // waere schlimmer als ein zu Unrecht
+                            // gehaltener.
+                            let bus = self.bus.clone();
+                            if crate::kontenwache::will_offline(&bus, &protokoll, "Verbinden").await {
+                                eprintln!("{protokoll}: offline gewuenscht, verbinde nicht");
+                                self.status_melden(STATUS_GETRENNT).await;
+                                if nochmal {
+                                    // Andersherum als beim Trennen: setzt
+                                    // die Kontoverwaltung die Eigenschaft
+                                    // erst nach dem Aufruf, stand oben
+                                    // noch „offline" und das Konto blieb
+                                    // unten. Ein zweiter Blick holt es.
+                                    let wieder = self.senden_an.clone();
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(
+                                            std::time::Duration::from_secs(3),
+                                        )
+                                        .await;
+                                        let _ = wieder
+                                            .send(Auftrag::Verbinden { nochmal: false });
+                                    });
+                                }
+                                continue;
+                            }
                             // Ein Griff allein heisst noch nicht, dass
                             // dahinter jemand ist: stirbt der Daemon,
                             // bleibt er liegen. Wer ihn dann ungeprueft
@@ -96,9 +138,52 @@ impl Lauf {
                                 }
                             }
                         }
-                        Some(Auftrag::Trennen) => {
-                            // Der Draht bleibt, siehe Verbindung::disconnect.
+                        Some(Auftrag::Trennen { nachfassen }) => {
+                            // Der Draht bleibt – ausser der Mensch hat es
+                            // so gewollt.
+                            //
+                            // Die Gelegenheitstrennung von Mission
+                            // Control und das Abschalten in der
+                            // Kontenuebersicht kommen als derselbe
+                            // Auftrag an; am Auftrag ist das nicht zu
+                            // unterscheiden, an RequestedPresence des
+                            // Kontos schon. Siehe
+                            // kontenwache::will_offline, dort steht auch,
+                            // warum im Zweifel gehalten wird.
+                            let bus = self.bus.clone();
+                            let gewollt =
+                                crate::kontenwache::will_offline(&bus, &protokoll, "Trennen")
+                                    .await;
                             self.status_melden(STATUS_GETRENNT).await;
+                            if gewollt {
+                                if hintergrund.is_some() {
+                                    eprintln!("{protokoll}: offline gewuenscht, baue den Draht ab");
+                                    hintergrund = None;
+                                }
+                            } else if nachfassen && hintergrund.is_some() {
+                                // Noch einmal hinsehen, gleich darauf.
+                                //
+                                // Dass die Kontoverwaltung die
+                                // Eigenschaft setzt, bevor sie trennt,
+                                // ist naheliegend, aber nirgends
+                                // zugesichert. Kommt sie in der anderen
+                                // Reihenfolge, stand oben noch der alte
+                                // Wert, und das Abschalten waere wieder
+                                // wirkungslos. Ein zweiter Blick kostet
+                                // zwei Busfragen und macht die
+                                // Entscheidung von der Reihenfolge
+                                // unabhaengig. Er laeuft ohne
+                                // Nachfassen, damit es dabei bleibt.
+                                let wieder = self.senden_an.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(
+                                        std::time::Duration::from_secs(3),
+                                    )
+                                    .await;
+                                    let _ = wieder
+                                        .send(Auftrag::Trennen { nachfassen: false });
+                                });
+                            }
                         }
                         Some(Auftrag::Senden { griff, an, text }) => {
                             if let Some(h) = &hintergrund {

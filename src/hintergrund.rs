@@ -156,7 +156,7 @@ impl Hintergrund {
     /// Stirbt der Daemon hinter dem Socket, bleibt der Griff darauf
     /// bestehen: die Bruecke meldete dann bis zu ihrem eigenen Neustart
     /// "verbunden", Telegram blieb still, und nirgends stand ein Fehler.
-    /// Genau eine billige Frage genuegt -- ist der Draht fort, scheitert
+    /// Genau eine billige Frage genuegt – ist der Draht fort, scheitert
     /// schon das Absenden.
     pub async fn lebt(&self) -> bool {
         match self {

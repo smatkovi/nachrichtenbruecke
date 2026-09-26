@@ -78,7 +78,7 @@ pub const STATUS_GETRENNT: u32 = 2;
 ///
 /// Briar kam zuletzt dazu und brauchte hier fast nichts: sein Dienst
 /// (harbour-briar, briard) beantwortet dieselben vier Wege wie die beiden
-/// anderen HTTP-Dienste -- /chats, /messages?jid=, /send?to=&text=,
+/// anderen HTTP-Dienste – /chats, /messages?jid=, /send?to=&text=,
 /// /events?since=. Eine Kennung ist dort c<Kontakt> oder g<Gruppe>.
 pub const PROTOKOLLE: [&str; 5] = ["whatsapp", "signal", "telegram", "matrix", "briar"];
 
