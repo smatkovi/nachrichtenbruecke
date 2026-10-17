@@ -4,12 +4,12 @@
 #   N9_HOST=172.28.172.2 tools/einspielen.sh               # N9 am Draht
 #   N9_JUMP=arch N9_HOST=192.168.1.8 tools/einspielen.sh   # N950 im Heimnetz
 #
-# NOCH NICHT GELAUFEN (26.09.2026): geschrieben, als kein Geraet erreichbar
-# war. Zwei Stellen koennen haken -- sudo fragt am N9 vielleicht nach einem
-# Passwort (nur fuer das N950 ist passwortloses sudo vermerkt), und das
-# Beenden der Bruecke laesst Drahtpost und Maschendraht als Waisen laufen;
-# ob die neu gestartete Bruecke deren Socket wiederfindet oder einen zweiten
-# Daemon anfaengt, ist hier nicht geprueft.
+# Am 17.10.2026 am N950 gelaufen, sauber. Damit sind auch die beiden
+# Fragen beantwortet, die hier offen standen: passwortloses sudo traegt,
+# und die Waisen sind keine -- die neu gestartete Bruecke findet den
+# Socket des weiterlaufenden Daemons wieder und startet keinen zweiten
+# (gemessen: Matrix war 14 s nach dem Einspielen mit 52 Chats wieder da).
+# Fuer den N9 ist das sudo weiter ungeprueft.
 #
 # Kopieren ist hier harmlos: /opt/bruecke/bruecke kam nie aus einem Paket,
 # also steht sein Hash nicht in aegis' refhashlist und niemand vergleicht

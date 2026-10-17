@@ -41,6 +41,7 @@ mod kanal;
 mod kennungen;
 mod kontenwache;
 mod lauf;
+mod netz;
 mod socketdienst;
 mod verbindung;
 
@@ -68,6 +69,24 @@ pub const GRIFF_KONTAKT: u32 = 1;
 pub const STATUS_VERBUNDEN: u32 = 0;
 pub const STATUS_VERBINDET: u32 = 1;
 pub const STATUS_GETRENNT: u32 = 2;
+
+/// Der Grund, der mit `StatusChanged` mitgeht – und das Einzige, woran
+/// die Kontoverwaltung ablesen kann, ob sie es noch einmal versuchen
+/// soll.
+///
+/// Bis zum 17.10.2026 stand hier immer die 0 ("kein Grund angegeben").
+/// Das bedeutet in Telepathy "unerwartet weg", und darauf verbindet die
+/// Kontoverwaltung sofort neu – auch dann, wenn die Bruecke gerade
+/// *absichtlich* nicht verbunden hat, weil das Konto abgeschaltet ist.
+/// Im Protokoll sah das als endlose Folge von `Connect` / `Zustand: 1` /
+/// `Zustand: 2` aus, und jeder Durchgang startete die Daemons neu.
+///
+/// `GEWOLLT` ist das Gegenmittel: "so bestellt, frag nicht nochmal".
+/// `NETZ` heisst "nicht meine Schuld, versuch es spaeter wieder" – die
+/// Kontoverwaltung wartet dann, statt zu hetzen.
+pub const GRUND_KEINER: u32 = 0;
+pub const GRUND_GEWOLLT: u32 = 1;
+pub const GRUND_NETZ: u32 = 2;
 
 /// Die Protokolle, die dieser Manager traegt.
 ///
@@ -315,6 +334,7 @@ mod tests {
             include_str!("socketdienst.rs"),
             include_str!("dienst.rs"),
             include_str!("kontenwache.rs"),
+            include_str!("netz.rs"),
         ];
         let mut schlimm = Vec::new();
         for (i, quelle) in quellen.iter().enumerate() {

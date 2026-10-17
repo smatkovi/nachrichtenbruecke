@@ -209,6 +209,17 @@ fn art(wert: &OwnedValue) -> Option<u32> {
 }
 
 async fn nachsehen(sitzung: &zbus::Connection, anlass: &str) {
+    // Ohne Netz ist nichts anzustossen.
+    //
+    // Es waere nicht nur vergeblich, es ist schaedlich: der Anstoss
+    // schreibt am Konto (siehe `anstossen`), und wer das alle fuenf
+    // Minuten und bei jedem icd2-Signal tut, waehrend ein Mensch gerade
+    // seine Konten abschaltet, kann ihm die Entscheidung
+    // ueberschreiben. Mobile Daten aus heisst: Ruhe.
+    if !crate::netz::netz_da() {
+        eprintln!("Kontenwache: kein Netz ({anlass}) -- nichts anstossen");
+        return;
+    }
     let verwalter = match zbus::Proxy::new(
         sitzung,
         AM,
@@ -260,10 +271,25 @@ async fn nachsehen(sitzung: &zbus::Connection, anlass: &str) {
 
 /// Anstossen heisst: einmal abmelden und wieder anmelden.
 ///
-/// Die Eigenschaft steht schon auf "verfuegbar"; sie noch einmal auf
-/// denselben Wert zu setzen aendert nichts und loest deshalb auch nichts
-/// aus. Erst der Wechsel bewegt die Kontoverwaltung.
+/// Dafuer gibt es in Telepathy `Account.Reconnect`, und das ist der
+/// richtige Weg: es faellt in die Zustaendigkeit der Kontoverwaltung und
+/// schreibt nichts am Konto.
+///
+/// Der Handweg darunter – `RequestedPresence` auf offline, zwei
+/// Sekunden warten, zurueck auf verfuegbar – hat einen Haken, der dem
+/// Menschen am 17.10.2026 teuer war: wer in diesen zwei Sekunden seine
+/// Konten abschaltet, bekommt sie von der Wache wieder eingeschaltet.
+/// Der Wunsch war offline, auf dem Konto stand danach wieder
+/// verfuegbar, und die Kontoverwaltung fing von vorne an zu verbinden.
+/// Er bleibt nur als Rueckfall, falls `Reconnect` fehlt.
 async fn anstossen(sitzung: &zbus::Connection, pfad: &str) {
+    match zbus::Proxy::new(sitzung, AM, pfad, IF_KONTO).await {
+        Ok(konto) => match konto.call::<_, _, ()>("Reconnect", &()).await {
+            Ok(()) => return,
+            Err(e) => eprintln!("Kontenwache: Reconnect ging nicht ({e}) -- von Hand"),
+        },
+        Err(e) => eprintln!("Kontenwache: Konto nicht erreichbar ({e})"),
+    }
     let setzen = |art: u32| async move {
         let p = match zbus::Proxy::new(sitzung, AM, pfad, "org.freedesktop.DBus.Properties").await {
             Ok(p) => p,

@@ -9,7 +9,10 @@ use zbus::object_server::SignalEmitter;
 use crate::hintergrund::Hintergrund;
 use crate::kanal::{Kanal, KanalZustand, Text};
 use crate::verbindung::{Anfragen, Auftrag, GeteilterZustand, Verbindung};
-use crate::{GRIFF_KONTAKT, IF_KANAL, STATUS_GETRENNT, STATUS_VERBINDET, STATUS_VERBUNDEN};
+use crate::{
+    GRIFF_KONTAKT, GRUND_GEWOLLT, GRUND_KEINER, GRUND_NETZ, IF_KANAL, STATUS_GETRENNT,
+    STATUS_VERBINDET, STATUS_VERBUNDEN,
+};
 
 pub struct Lauf {
     pub bus: zbus::Connection,
@@ -31,6 +34,23 @@ impl Lauf {
         let protokoll = self.z.lock().await.protokoll.clone();
         let mut hintergrund: Option<Hintergrund> = None;
         let mut namen: HashMap<String, String> = HashMap::new();
+
+        // Der Verbindungsversuch laeuft daneben, nicht in der Schleife.
+        //
+        // Vorher stand er mitten im Auftragszweig, und das kostete die
+        // Bruecke die Hoerfaehigkeit: `Hintergrund::oeffnen` wartet bis
+        // zu 30 s auf den Socket des Daemons, die Chatliste danach noch
+        // bis zu 24 s. So lange nahm die Schleife *keinen* weiteren
+        // Auftrag an -- auch kein `Trennen`. Wer in dieser Zeit das
+        // Konto abschaltete, sah nichts geschehen; abschalten ging erst,
+        // wenn das Konto einmal durchverbunden war. Genau darueber hat
+        // sich am 17.10.2026 der Mensch beschwert.
+        //
+        // Jetzt traegt ein Faden den Versuch, und sein Ergebnis kommt
+        // ueber diesen Kanal zurueck. `Trennen` bricht ihn ab.
+        type Ergebnis = Result<(Hintergrund, String, HashMap<String, String>), String>;
+        let (fertig_an, mut fertig_von) = mpsc::unbounded_channel::<Ergebnis>();
+        let mut verbindet: Option<tokio::task::JoinHandle<()>> = None;
 
         loop {
             // Auftraege haben Vorrang: sie kommen von der Oberflaeche und
@@ -64,7 +84,11 @@ impl Lauf {
                             let bus = self.bus.clone();
                             if crate::kontenwache::will_offline(&bus, &protokoll, "Verbinden").await {
                                 eprintln!("{protokoll}: offline gewuenscht, verbinde nicht");
-                                self.status_melden(STATUS_GETRENNT).await;
+                                // Mit dem Grund GEWOLLT, nicht mit 0:
+                                // sonst liest die Kontoverwaltung
+                                // "unerwartet weg" und ruft sofort
+                                // wieder Connect.
+                                self.status_melden(STATUS_GETRENNT, GRUND_GEWOLLT).await;
                                 if nochmal {
                                     // Andersherum als beim Trennen: setzt
                                     // die Kontoverwaltung die Eigenschaft
@@ -101,42 +125,50 @@ impl Lauf {
                                 // einmal melden. Mission Control fragt
                                 // mehrfach, und wer dann schweigt, gilt
                                 // ihm als offline.
-                                self.status_melden(STATUS_VERBUNDEN).await;
+                                self.status_melden(STATUS_VERBUNDEN, GRUND_KEINER).await;
                                 continue;
                             }
-                            self.status_melden(STATUS_VERBINDET).await;
-                            match Hintergrund::oeffnen(&protokoll).await {
-                                Ok(h) => {
-                                    // Erst der eigene Griff, dann alles
-                                    // andere: ohne ihn gilt die
-                                    // Verbindung dem Kontoverwalter als
-                                    // nicht verbunden.
-                                    let eigen = h.eigene_kennung().await;
-                                    {
-                                        let mut z = self.z.lock().await;
-                                        let name = if eigen.is_empty() {
-                                            format!("selbst-{protokoll}")
-                                        } else {
-                                            eigen.clone()
-                                        };
-                                        let g = z.kennungen.griff(&name);
-                                        z.kennungen.name_setzen(g, &name);
-                                        z.selbst = g;
-                                        let p = z.protokoll.clone();
-                                        z.kennungen.sichern(&p);
-                                        eprintln!("{protokoll}: eigener Griff {g} ({name})");
-                                    }
-                                    namen = h.chats().await;
-                                    eprintln!("{protokoll}: {} Chats bekannt", namen.len());
-                                    self.namen_uebernehmen(&namen).await;
-                                    hintergrund = Some(h);
-                                    self.status_melden(STATUS_VERBUNDEN).await;
-                                }
-                                Err(e) => {
-                                    eprintln!("{protokoll}: {e}");
-                                    self.status_melden(STATUS_GETRENNT).await;
-                                }
+                            // Ein Versuch laeuft schon. Ihn abbrechen und
+                            // neu anfangen hiesse, den Daemon ein zweites
+                            // Mal zu starten.
+                            if verbindet.as_ref().map(|v| !v.is_finished()).unwrap_or(false) {
+                                self.status_melden(STATUS_VERBINDET, GRUND_KEINER).await;
+                                continue;
                             }
+                            // Ohne Netz gar nicht anfangen.
+                            //
+                            // Sonst startet jeder Versuch die Daemons,
+                            // laeuft in deren Fristen und endet im
+                            // Fehler -- und weil die Kontoverwaltung das
+                            // sofort wiederholt, wird daraus ein
+                            // Dauerlauf, der nur Strom kostet. Der Grund
+                            // NETZ sagt ihr, dass das Warten an der
+                            // Leitung liegt; die Kontenwache holt das
+                            // Konto, sobald icd2 wieder etwas meldet.
+                            if !crate::netz::netz_da() {
+                                eprintln!("{protokoll}: kein Netz -- kein Versuch");
+                                self.status_melden(STATUS_GETRENNT, GRUND_NETZ).await;
+                                continue;
+                            }
+                            self.status_melden(STATUS_VERBINDET, GRUND_KEINER).await;
+                            let prot = protokoll.clone();
+                            let fertig = fertig_an.clone();
+                            verbindet = Some(tokio::spawn(async move {
+                                let ergebnis = match Hintergrund::oeffnen(&prot).await {
+                                    Ok(h) => {
+                                        // Der eigene Griff und die
+                                        // Chatliste gehoeren noch zum
+                                        // Versuch: ohne sie stehen in
+                                        // der Nachrichten-App rohe
+                                        // Nummern statt Namen.
+                                        let eigen = h.eigene_kennung().await;
+                                        let namen = h.chats().await;
+                                        Ok((h, eigen, namen))
+                                    }
+                                    Err(e) => Err(e),
+                                };
+                                let _ = fertig.send(ergebnis);
+                            }));
                         }
                         Some(Auftrag::Trennen { nachfassen }) => {
                             // Der Draht bleibt – ausser der Mensch hat es
@@ -154,8 +186,17 @@ impl Lauf {
                             let gewollt =
                                 crate::kontenwache::will_offline(&bus, &protokoll, "Trennen")
                                     .await;
-                            self.status_melden(STATUS_GETRENNT).await;
+                            self.status_melden(STATUS_GETRENNT, GRUND_GEWOLLT).await;
                             if gewollt {
+                                // Auch einen laufenden Versuch: wer
+                                // abschaltet, waehrend die Bruecke noch
+                                // auf einen Daemon wartet, will nicht,
+                                // dass das Konto eine Minute spaeter
+                                // doch verbunden ist.
+                                if let Some(v) = verbindet.take() {
+                                    v.abort();
+                                    eprintln!("{protokoll}: Verbindungsversuch abgebrochen");
+                                }
                                 if hintergrund.is_some() {
                                     eprintln!("{protokoll}: offline gewuenscht, baue den Draht ab");
                                     hintergrund = None;
@@ -197,6 +238,57 @@ impl Lauf {
                     }
                 }
 
+                // Ein Versuch ist durch.
+                ergebnis = fertig_von.recv() => {
+                    let Some(ergebnis) = ergebnis else { return };
+                    match ergebnis {
+                        Ok((h, eigen, neue)) => {
+                            // Zwischen Anfang und Ende des Versuchs
+                            // liegt eine Minute, in der jemand das Konto
+                            // abgeschaltet haben kann. Dann gehoert der
+                            // frische Draht gleich wieder weg -- sonst
+                            // gilt das Konto als verbunden, und die
+                            // Kontenwache laesst es oben.
+                            if crate::kontenwache::will_offline(&self.bus, &protokoll, "fertig").await {
+                                eprintln!("{protokoll}: inzwischen abgeschaltet -- Draht wieder weg");
+                                drop(h);
+                                self.status_melden(STATUS_GETRENNT, GRUND_GEWOLLT).await;
+                            } else {
+                                // Erst der eigene Griff, dann alles
+                                // andere: ohne ihn gilt die Verbindung
+                                // dem Kontoverwalter als nicht
+                                // verbunden.
+                                {
+                                    let mut z = self.z.lock().await;
+                                    let name = if eigen.is_empty() {
+                                        format!("selbst-{protokoll}")
+                                    } else {
+                                        eigen.clone()
+                                    };
+                                    let g = z.kennungen.griff(&name);
+                                    z.kennungen.name_setzen(g, &name);
+                                    z.selbst = g;
+                                    let p = z.protokoll.clone();
+                                    z.kennungen.sichern(&p);
+                                    eprintln!("{protokoll}: eigener Griff {g} ({name})");
+                                }
+                                eprintln!("{protokoll}: {} Chats bekannt", neue.len());
+                                self.namen_uebernehmen(&neue).await;
+                                namen = neue;
+                                hintergrund = Some(h);
+                                self.status_melden(STATUS_VERBUNDEN, GRUND_KEINER).await;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("{protokoll}: {e}");
+                            // Der Dienst war nicht zu erreichen -- fuer
+                            // die Kontoverwaltung dasselbe wie ein
+                            // Netzfehler: spaeter wieder, nicht sofort.
+                            self.status_melden(STATUS_GETRENNT, GRUND_NETZ).await;
+                        }
+                    }
+                }
+
                 chat = self.gelesen.recv() => {
                     let Some(chat) = chat else { return };
                     if let Some(m) = self.melder.as_mut() {
@@ -230,7 +322,12 @@ impl Lauf {
         }
     }
 
-    async fn status_melden(&self, status: u32) {
+    /// Den Zustand melden – mit Grund.
+    ///
+    /// Der Grund ist kein Beiwerk: er entscheidet, ob die
+    /// Kontoverwaltung es gleich wieder versucht. Siehe die
+    /// GRUND_-Konstanten in main.rs.
+    async fn status_melden(&self, status: u32, grund: u32) {
         {
             let mut z = self.z.lock().await;
             if z.status == status {
@@ -240,9 +337,9 @@ impl Lauf {
         }
         let pfad = self.z.lock().await.pfad.clone();
         if let Ok(emitter) = SignalEmitter::new(&self.bus, pfad) {
-            let _ = Verbindung::tp_status_changed(&emitter, status, 0).await;
+            let _ = Verbindung::tp_status_changed(&emitter, status, grund).await;
         }
-        eprintln!("Zustand: {status}");
+        eprintln!("Zustand: {status} (Grund {grund})");
     }
 
     async fn namen_uebernehmen(&self, namen: &HashMap<String, String>) {
