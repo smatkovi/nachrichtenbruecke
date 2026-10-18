@@ -9,8 +9,63 @@ use std::collections::{HashMap, HashSet};
 use serde_json::json;
 use tokio::sync::mpsc;
 
-use crate::dienst::Dienst;
+use crate::dienst::{briar_ordner, Dienst};
 use crate::socketdienst::{self, SocketDienst};
+
+/// Wo briard liegt. Fest verdrahtet wie in der Briar-App selbst, die den
+/// Dienst aus demselben Pfad startet (meego/main.cpp).
+const BRIARD: &str = "/opt/briar/bin/briard";
+
+/// Holt briard hoch, wenn das Briar-Konto eingeschaltet wird.
+///
+/// Nur dann, und nur wenn der Sockel schweigt -- ein zweiter Dienst neben
+/// einem laufenden waere genau der Fehler, den der Sockelweg bei WhatsApp
+/// schon einmal gemacht hat. briard selbst haelt zusaetzlich eine
+/// flock-Sperre auf briard.lock, die App und Bruecke stolpern also auch
+/// dann nicht uebereinander, wenn beide gleichzeitig starten wollen.
+///
+/// Den verwaisten Sockel raeumen wir *nicht* weg: briard entfernt ihn vor
+/// dem Binden selbst, und wer ihm dabei zuvorkommt, loescht womoeglich
+/// den eines gerade angelaufenen Dienstes.
+async fn briard_starten() -> Result<(), String> {
+    use std::path::Path;
+    if !Path::new(BRIARD).exists() {
+        return Err(format!("briar: {BRIARD} fehlt"));
+    }
+    let ordner = briar_ordner();
+    let zustand = ordner.join("state.json");
+    if !zustand.exists() {
+        // Ohne eingerichtetes Konto hat ein Start keinen Sinn; briard
+        // legte sonst ein leeres Profil neben das echte.
+        return Err("briar: kein state.json -- erst in der App einrichten".into());
+    }
+    eprintln!("briar: starte {BRIARD}");
+    tokio::process::Command::new(BRIARD)
+        .arg("--state")
+        .arg(&zustand)
+        // briard schreibt sein eigenes briard.log; alles Weitere waere
+        // nur Rauschen im Protokoll der Bruecke.
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("briar: Start gescheitert: {e}"))?;
+    // Auf den Sockel warten -- auf diesem Geraet braucht der Dienst seine
+    // Zeit, Tor kommt erst danach.
+    //
+    // Und zwar auf eine *Verbindung*, nicht auf die Datei: die liegt
+    // schon da, sobald briard sie anlegt, einen Wimpernschlag bevor er
+    // darauf hoert. Wer nur `exists()` prueft, faellt in genau diese
+    // Luecke, meldet "Dienst antwortet nicht" und laesst die Kontenwache
+    // einen ganzen Durchlauf spaeter nochmal anfangen.
+    let sockel = ordner.join("api.sock");
+    for _ in 0..60 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if tokio::net::UnixStream::connect(&sockel).await.is_ok() {
+            return Ok(());
+        }
+    }
+    Err("briar: Sockel kam nicht".into())
+}
 
 /// Eine Nachricht, wie die Bruecke sie weiterreicht.
 pub struct NeueNachricht {
@@ -44,9 +99,20 @@ impl Hintergrund {
             "whatsapp" | "signal" | "briar" => {
                 let mut d = Dienst::neu(protokoll).ok_or("unbekannt")?;
                 if !d.finden().await {
-                    return Err(format!("{protokoll}: Dienst antwortet nicht"));
+                    // Briar ist der einzige, dessen Dienst niemand sonst
+                    // hochholt: WhatsApp und Signal haengen an ihren Apps,
+                    // Telegram und Matrix startet der Sockelweg selbst.
+                    // briard lief bis hierher nur, solange die Briar-App
+                    // offen war -- nach jedem Ausschalten blieb das Konto
+                    // auf "Netzstoerung" stehen, bis jemand sie oeffnete.
+                    if protokoll == "briar" {
+                        briard_starten().await?;
+                    }
+                    if !d.finden().await {
+                        return Err(format!("{protokoll}: Dienst antwortet nicht"));
+                    }
                 }
-                eprintln!("{protokoll}: Dienst auf Port {}", d.port());
+                eprintln!("{protokoll}: Dienst auf {}", d.wo());
                 Ok(Hintergrund::Http {
                     dienst: d,
                     stand: HashMap::new(),
@@ -160,7 +226,7 @@ impl Hintergrund {
     /// schon das Absenden.
     pub async fn lebt(&self) -> bool {
         match self {
-            Hintergrund::Http { dienst, .. } => dienst.eigene_nummer().await.is_some(),
+            Hintergrund::Http { dienst, .. } => dienst.lebt().await,
             Hintergrund::Socket { dienst, .. } => {
                 dienst.fragen("get_me", serde_json::Value::Null).await.is_ok()
             }

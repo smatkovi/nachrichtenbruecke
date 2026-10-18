@@ -5,9 +5,31 @@
 //! HTTP-Schnittstelle, und wer sie ohnehin anspricht, braucht keinen
 //! Uebersetzer dazwischen. Damit fallen zwei Python-Prozesse weg.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::Deserialize;
+
+/// Anfrage hinaus, Antwort herein -- ueber jeden Strom, der beides kann.
+///
+/// Dieselben zwanzig Zeilen fuer TCP und Sockel: briard antwortet immer
+/// mit `Connection: close` und laesst die Verbindung dann fallen, die
+/// Dienste von WhatsApp und Signal ebenso. `read_to_end` bis zum Ende ist
+/// deshalb der richtige Leser -- und der einzige, der auch mit
+/// stueckweiser Uebertragung ohne Laengenangabe zurechtkommt.
+async fn austausch<S>(mut strom: S, anfrage: &str) -> Result<String, String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    strom
+        .write_all(anfrage.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut roh = Vec::new();
+    strom.read_to_end(&mut roh).await.map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&roh).into_owned())
+}
 
 /// Was ein Dienst ueber einen Chat sagt.
 #[derive(Deserialize, Clone, Debug, Default)]
@@ -51,45 +73,95 @@ struct Ereignis {
     seq: i64,
 }
 
-/// Ein Dienst, erreichbar auf einem von wenigen Ports.
+/// Wo ein Dienst zu erreichen ist.
+///
+/// WhatsApp und Signal hoeren auf einem von wenigen Ports -- welcher es
+/// ist, steht erst beim Suchen fest. Briar ist anders: briard hat mit
+/// 0.42.0 den Port aufgegeben und liegt nur noch auf einem Unix-Sockel im
+/// eigenen Datenordner, und zwar mit Anmeldung. Ein Port waere dort auch
+/// nicht zu haben: `--api-port` wird ohne `BRIAR_API_TCP=1` stillschweigend
+/// ignoriert, und ohne Geheimnis beantwortet briard selbst /status mit 401.
+#[derive(Clone)]
+enum Ziel {
+    Ports { reihe: &'static [u16], gefunden: u16 },
+    Sockel { pfad: PathBuf },
+}
+
+/// Ein Dienst, erreichbar ueber einen Port oder einen Sockel.
 #[derive(Clone)]
 pub struct Dienst {
     pub protokoll: String,
-    ports: &'static [u16],
-    port: u16,
+    ziel: Ziel,
+}
+
+/// Der Datenordner von harbour-briar -- dort liegen Sockel und Geheimnis.
+pub fn briar_ordner() -> PathBuf {
+    let heim = std::env::var("HOME").unwrap_or_else(|_| "/home/user".into());
+    PathBuf::from(heim).join(".local/share/harbour-briar")
 }
 
 impl Dienst {
     pub fn neu(protokoll: &str) -> Option<Self> {
-        let ports: &'static [u16] = match protokoll {
-            "whatsapp" => &[8085, 8086, 8087, 8088, 8089],
-            "signal" => &[8095, 8096, 8097, 8098, 8099],
-            // briard hoert fest auf 8105; die App startet ihn selbst.
-            "briar" => &[8105],
+        let ziel = match protokoll {
+            "whatsapp" => Ziel::Ports { reihe: &[8085, 8086, 8087, 8088, 8089], gefunden: 0 },
+            "signal" => Ziel::Ports { reihe: &[8095, 8096, 8097, 8098, 8099], gefunden: 0 },
+            "briar" => Ziel::Sockel { pfad: briar_ordner().join("api.sock") },
             _ => return None,
         };
-        Some(Dienst { protokoll: protokoll.to_string(), ports, port: 0 })
+        Some(Dienst { protokoll: protokoll.to_string(), ziel })
     }
 
     /// Sucht den Dienst. Der zuletzt gefundene Port wird zuerst probiert.
     pub async fn finden(&mut self) -> bool {
-        let mut reihe: Vec<u16> = Vec::with_capacity(self.ports.len() + 1);
-        if self.port != 0 {
-            reihe.push(self.port);
-        }
-        reihe.extend_from_slice(self.ports);
-        for p in reihe {
-            self.port = p;
-            if self.hole_roh("/status", Duration::from_secs(3)).await.is_ok() {
-                return true;
+        match &self.ziel {
+            Ziel::Sockel { .. } => self.hole_roh("/status", Duration::from_secs(3)).await.is_ok(),
+            Ziel::Ports { reihe, gefunden } => {
+                let mut folge: Vec<u16> = Vec::with_capacity(reihe.len() + 1);
+                if *gefunden != 0 {
+                    folge.push(*gefunden);
+                }
+                folge.extend_from_slice(reihe);
+                for p in folge {
+                    if let Ziel::Ports { gefunden, .. } = &mut self.ziel {
+                        *gefunden = p;
+                    }
+                    if self.hole_roh("/status", Duration::from_secs(3)).await.is_ok() {
+                        return true;
+                    }
+                }
+                if let Ziel::Ports { gefunden, .. } = &mut self.ziel {
+                    *gefunden = 0;
+                }
+                false
             }
         }
-        self.port = 0;
-        false
     }
 
-    pub fn port(&self) -> u16 {
-        self.port
+    /// Wohin der Draht geht -- nur fuer das Protokoll.
+    pub fn wo(&self) -> String {
+        match &self.ziel {
+            Ziel::Ports { gefunden, .. } => format!("Port {gefunden}"),
+            Ziel::Sockel { pfad } => format!("Sockel {}", pfad.display()),
+        }
+    }
+
+    /// Das Geheimnis fuer briard, frisch von der Platte.
+    ///
+    /// Nicht gemerkt: briard legt es bei jedem Start neu an (api.rs,
+    /// `geheimnis_anlegen`), und wer es einmal einliest und behaelt, redet
+    /// nach einem Neustart des Dienstes gegen lauter 401. 64 Byte aus dem
+    /// eigenen Heimverzeichnis kosten weniger als dieser Fehler.
+    fn geheimnis(&self) -> Option<String> {
+        match &self.ziel {
+            Ziel::Sockel { pfad } => {
+                let datei = pfad.with_file_name("api-token");
+                std::fs::read_to_string(datei)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            }
+            Ziel::Ports { .. } => None,
+        }
     }
 
     /// Ein sehr kleiner HTTP-Klient.
@@ -98,26 +170,33 @@ impl Dienst {
     /// GET auf 127.0.0.1 ohne Umleitungen, ohne TLS, ohne Anmeldung. Der
     /// Dienst antwortet mit Content-Length oder schliesst die Verbindung.
     async fn hole_roh(&self, pfad: &str, frist: Duration) -> Result<String, String> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        if self.port == 0 {
-            return Err("kein Port bekannt".into());
-        }
-        let adresse = format!("127.0.0.1:{}", self.port);
+        let anmeldung = match self.geheimnis() {
+            // Zwei Schreibweisen nimmt briard an; "Bearer" ist die, die
+            // auch seine eigene Oberflaeche schickt (api.rs, `koepfe`).
+            Some(g) => format!("Authorization: Bearer {g}\r\n"),
+            None => String::new(),
+        };
+        let anfrage = format!(
+            "GET {pfad} HTTP/1.1\r\nHost: 127.0.0.1\r\n{anmeldung}Connection: close\r\n\r\n"
+        );
         let arbeit = async {
-            let mut strom = tokio::net::TcpStream::connect(&adresse)
-                .await
-                .map_err(|e| e.to_string())?;
-            let anfrage = format!(
-                "GET {pfad} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-            );
-            strom
-                .write_all(anfrage.as_bytes())
-                .await
-                .map_err(|e| e.to_string())?;
-            let mut roh = Vec::new();
-            strom.read_to_end(&mut roh).await.map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&roh).into_owned();
+            let text = match &self.ziel {
+                Ziel::Ports { gefunden, .. } => {
+                    if *gefunden == 0 {
+                        return Err("kein Port bekannt".into());
+                    }
+                    let strom = tokio::net::TcpStream::connect(format!("127.0.0.1:{gefunden}"))
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    austausch(strom, &anfrage).await?
+                }
+                Ziel::Sockel { pfad } => {
+                    let strom = tokio::net::UnixStream::connect(pfad)
+                        .await
+                        .map_err(|e| format!("{}: {e}", pfad.display()))?;
+                    austausch(strom, &anfrage).await?
+                }
+            };
             let (kopf, koerper) = text
                 .split_once("\r\n\r\n")
                 .ok_or_else(|| "Antwort ohne Kopf".to_string())?;
@@ -195,6 +274,33 @@ impl Dienst {
         let roh = self.hole_roh("/status", Duration::from_secs(5)).await.ok()?;
         let v: serde_json::Value = serde_json::from_str(&roh).ok()?;
         v.get("phone")?.as_str().map(|s| s.to_string())
+    }
+
+    /// Antwortet der Dienst noch?
+    ///
+    /// Fuer WhatsApp und Signal ist die eigene Nummer die Antwort: sie
+    /// steht erst da, wenn das Backend wirklich angemeldet ist -- ein
+    /// blankes 200 hiesse nur "Prozess laeuft", und darauf ist schon
+    /// einmal eine stumme Verbindung gebaut worden.
+    ///
+    /// Briar hat keine Nummer, und `phone` kommt in briard nirgends vor.
+    /// Bis hierher war `lebt()` fuer Briar also immer falsch, und
+    /// lauf.rs warf die gerade aufgebaute Verbindung im naechsten
+    /// Durchlauf wieder weg -- "Griff ist tot -- verbinde neu", im Kreis.
+    /// Hier zaehlt stattdessen, dass /status ein Objekt mit `version`
+    /// liefert: das steht in beiden Zweigen von briards `status()`, auch
+    /// im zugesperrten, und kommt nur mit gueltigem Geheimnis heraus.
+    pub async fn lebt(&self) -> bool {
+        if self.protokoll != "briar" {
+            return self.eigene_nummer().await.is_some();
+        }
+        let Ok(roh) = self.hole_roh("/status", Duration::from_secs(5)).await else {
+            return false;
+        };
+        serde_json::from_str::<serde_json::Value>(&roh)
+            .ok()
+            .and_then(|v| v.get("version").cloned())
+            .is_some()
     }
 }
 
